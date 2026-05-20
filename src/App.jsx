@@ -55,6 +55,15 @@ export default function App() {
     setActiveId(matching ? matching.id : null);
   }, [currentTime, captions]);
 
+  // Clean up object URLs to prevent browser memory leaks
+  useEffect(() => {
+    return () => {
+      if (videoSrc && videoSrc.startsWith('blob:')) {
+        URL.revokeObjectURL(videoSrc);
+      }
+    };
+  }, [videoSrc]);
+
   // Integrated Network Loop to ingest live segments from Beeceptor
   useEffect(() => {
     let isCurrentRequest = true;
@@ -102,9 +111,13 @@ export default function App() {
 
   const handleTogglePlay = () => {
     if (!videoRef.current) return;
-    if (isPlaying) videoRef.current.pause();
-    else videoRef.current.play();
-    setIsPlaying(!isPlaying);
+    if (isPlaying) {
+      videoRef.current.pause();
+      setIsPlaying(false);
+    } else {
+      videoRef.current.play().catch(err => console.log("Playback interrupted:", err));
+      setIsPlaying(true);
+    }
   };
 
   const handleTimelineSeek = (time) => {
@@ -164,52 +177,47 @@ export default function App() {
   };
 
   const handleSelectCaption = (id, event) => {
-  if (event.metaKey || event.ctrlKey) {
-    // Multi-select toggle
-    setSelectedIds(prev => {
-      const isAlreadySelected = prev.includes(id);
-      return isAlreadySelected ? prev.filter(item => item !== id) : [...prev, id];
-    });
-  } else if (event.shiftKey && selectedIds.length > 0) {
-    // Multi-select range
-    const lastSelected = selectedIds[selectedIds.length - 1];
-    const currentIndex = captions.findIndex(c => c.id === id);
-    const lastIndex = captions.findIndex(c => c.id === lastSelected);
-    const start = Math.min(currentIndex, lastIndex);
-    const end = Math.max(currentIndex, lastIndex);
-    const rangeIds = captions.slice(start, end + 1).map(c => c.id);
-    setSelectedIds(prev => Array.from(new Set([...prev, ...rangeIds])));
-  } else {
-    // Single select: Load this specific caption's styling metrics directly into the control panel
-    setSelectedIds([id]);
-    setActiveId(id);
+    if (event.metaKey || event.ctrlKey) {
+      setSelectedIds(prev => {
+        const isAlreadySelected = prev.includes(id);
+        return isAlreadySelected ? prev.filter(item => item !== id) : [...prev, id];
+      });
+    } else if (event.shiftKey && selectedIds.length > 0) {
+      const lastSelected = selectedIds[selectedIds.length - 1];
+      const currentIndex = captions.findIndex(c => c.id === id);
+      const lastIndex = captions.findIndex(c => c.id === lastSelected);
+      const start = Math.min(currentIndex, lastIndex);
+      const end = Math.max(currentIndex, lastIndex);
+      const rangeIds = captions.slice(start, end + 1).map(c => c.id);
+      setSelectedIds(prev => Array.from(new Set([...prev, ...rangeIds])));
+    } else {
+      setSelectedIds([id]);
+      setActiveId(id);
 
-    const targetedCaption = captions.find(c => c.id === id);
-    if (targetedCaption) {
-      setCaptionStyles(prev => ({
-        ...prev,
-        fontFamily: targetedCaption.fontFamily || 'Impact, Arial Black, sans-serif',
-        fontSize: targetedCaption.fontSize || '48px',
-        fontWeight: targetedCaption.fontWeight || '900',
-        fontStyle: targetedCaption.fontStyle || 'normal',
-        color: targetedCaption.color || '#fbbf24',
-        textTransform: targetedCaption.textTransform || 'uppercase',
-      }));
+      const targetedCaption = captions.find(c => c.id === id);
+      if (targetedCaption) {
+        setCaptionStyles(prev => ({
+          ...prev,
+          fontFamily: targetedCaption.fontFamily || 'Impact, Arial Black, sans-serif',
+          fontSize: targetedCaption.fontSize || '48px',
+          fontWeight: targetedCaption.fontWeight || '900',
+          fontStyle: targetedCaption.fontStyle || 'normal',
+          color: targetedCaption.color || '#fbbf24',
+          textTransform: targetedCaption.textTransform || 'uppercase',
+        }));
+      }
     }
-  }
-};
-  // Consolidated Single Custom Change Event for full bulk synchronization
-const handleCustomStyleChange = (field, value) => {
-  // 1. Keep the right panel inputs visually updated
-  setCaptionStyles(prev => ({ ...prev, preset: 'custom', [field]: value }));
-  
-  // 2. ONLY mutate the caption data if they are actively highlighted in selectedIds
-  if (selectedIds.length > 0) {
-    setCaptions(prev => prev.map(c => 
-      selectedIds.includes(c.id) ? { ...c, [field]: value } : c
-    ));
-  }
-};
+  };
+
+  const handleCustomStyleChange = (field, value) => {
+    setCaptionStyles(prev => ({ ...prev, preset: 'custom', [field]: value }));
+    
+    if (selectedIds.length > 0) {
+      setCaptions(prev => prev.map(c => 
+        selectedIds.includes(c.id) ? { ...c, [field]: value } : c
+      ));
+    }
+  };
 
   function setThemePreset(preset) {
     setCaptionStyles(prev => ({
@@ -241,17 +249,18 @@ const handleCustomStyleChange = (field, value) => {
     }
   }
 
+  // Find the current active playback caption slice
   const currentActiveCaption = captions.find(c => c.id === activeId);
 
-// Merge individual caption custom styles with active control panel states safely
-const activeViewportStyles = currentActiveCaption ? {
-  fontFamily: currentActiveCaption.fontFamily || captionStyles.fontFamily,
-  fontSize: currentActiveCaption.fontSize || captionStyles.fontSize,
-  fontWeight: currentActiveCaption.fontWeight || captionStyles.fontWeight,
-  fontStyle: currentActiveCaption.fontStyle || captionStyles.fontStyle,
-  color: currentActiveCaption.color || captionStyles.color,
-  textTransform: currentActiveCaption.textTransform || captionStyles.textTransform,
-} : captionStyles;
+  // Secure styling merge down to the active viewport canvas frame
+  const activeViewportStyles = currentActiveCaption ? {
+    fontFamily: currentActiveCaption.fontFamily || captionStyles.fontFamily,
+    fontSize: currentActiveCaption.fontSize || captionStyles.fontSize,
+    fontWeight: currentActiveCaption.fontWeight || captionStyles.fontWeight,
+    fontStyle: currentActiveCaption.fontStyle || captionStyles.fontStyle,
+    color: currentActiveCaption.color || captionStyles.color,
+    textTransform: currentActiveCaption.textTransform || captionStyles.textTransform,
+  } : captionStyles;
 
   return (
     <div className="flex flex-col h-screen bg-zinc-950 text-zinc-100 font-sans select-none overflow-hidden">
@@ -281,8 +290,8 @@ const activeViewportStyles = currentActiveCaption ? {
         {/* Center Canvas + Bottom Timeline Panel Stack Area */}
         <main className="flex-1 flex flex-col bg-zinc-950 overflow-hidden min-w-0">
           
-          {/* Main Top Content Area */}
-          <div className="flex-1 grid grid-cols-1 lg:grid-cols-4 p-6 gap-6 min-h-0 relative overflow-hidden">
+          {/* Main Top Content Area — MODIFIED layout split weights to grid-cols-5 */}
+          <div className="flex-1 grid grid-cols-1 lg:grid-cols-5 p-6 gap-6 min-h-0 relative overflow-hidden">
             
             {/* Loading Indicator */}
             {isLoading && (
@@ -294,24 +303,23 @@ const activeViewportStyles = currentActiveCaption ? {
               </div>
             )}
 
-            {/* Video Viewport Column */}
-            <div className="lg:col-span-3 min-h-0 flex flex-col relative">
+            {/* Video Viewport Column — Expanded from col-span-3 to col-span-4 */}
+            <div className="lg:col-span-4 min-h-0 flex flex-col relative">
               <VideoViewport 
                 videoSrc={videoSrc}
                 videoRef={videoRef}
                 isPlaying={isPlaying}
                 currentTime={currentTime}
                 duration={duration}
-                activeCaption={captions.find(c => c.id === activeId)}
-                captionStyles={captionStyles} 
-                stylePreset={captionStyles.preset} 
+                activeCaption={currentActiveCaption}
+                captionStyles={activeViewportStyles} 
                 onTogglePlay={handleTogglePlay}
                 onTimeUpdate={() => setCurrentTime(videoRef.current?.currentTime || 0)}
                 onLoadedMetadata={() => setDuration(videoRef.current?.duration || 0)}
               />
             </div>
 
-            {/* Right Panel Subtitle Preset Controls */}
+            {/* Right Panel Subtitle Preset Controls — Set to col-span-1 for premium spacing layout */}
             <div className="lg:col-span-1 bg-zinc-900/30 border border-zinc-800/60 rounded-2xl p-4 flex flex-col gap-4 h-full overflow-y-auto min-w-0">
               
               {/* Preset Panel Header Area */}
