@@ -358,7 +358,7 @@ export default function App() {
 
           {/* SMOOTH ANIMATED SLIDING TIMELINE PANEL CONTAINER */}
           <div 
-            style={{ height: isTimelineOpen ? '180px' : '0px' }} 
+            style={{ height: isTimelineOpen ? '220px' : '0px' }} 
             className="shrink-0 w-full bg-zinc-900 overflow-hidden transition-[height] duration-300 ease-in-out"
           >
             <TimelineTrack 
