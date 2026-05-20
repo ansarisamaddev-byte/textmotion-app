@@ -3,7 +3,7 @@ import WorkspaceHeader from './components/WorkspaceHeader';
 import TranscriptSidebar from './components/TranscriptSidebar';
 import VideoViewport from './components/VideoViewport';
 import TimelineTrack from './components/TimelineTrack';
-import { Layers, Edit3, X } from 'lucide-react';
+import { Layers, Edit3, X, ChevronUp, ChevronDown } from 'lucide-react';
 
 const INITIAL_CAPTIONS = [
   { id: '1', start: 0.0, end: 2.5, text: "Welcome to TextMotion project dashboard!" },
@@ -21,8 +21,9 @@ export default function App() {
   const [activeId, setActiveId] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Layout Width Sizing State
-  const [sidebarWidth, setSidebarWidth] = useState(250); 
+  // Layout Sizing States
+  const [sidebarWidth, setSidebarWidth] = useState(220); 
+  const [isTimelineOpen, setIsTimelineOpen] = useState(true); // Control slide up/down state
 
   // Combined Advanced Typography State Object
   const [captionStyles, setCaptionStyles] = useState({
@@ -33,7 +34,7 @@ export default function App() {
     fontStyle: 'normal',
     color: '#fbbf24',
     textTransform: 'uppercase',
-    isEditingCustom: false // Flag controlling custom edit slide down flow
+    isEditingCustom: false 
   });
 
   const videoRef = useRef(null);
@@ -50,11 +51,9 @@ export default function App() {
 
     const fetchTranscribedCaptions = async () => {
       setIsLoading(true);
-      console.log("Triggering network fetch instance to Beeceptor...");
       try {
         const response = await fetch('https://textmotion-test.free.beeceptor.com/v1/captions');
         const data = await response.json();
-        console.log("Network layer execution result:", data);
         
         if (isCurrentRequest && data && data.words) {
           const formattedData = data.words.map((item, index) => ({
@@ -141,8 +140,8 @@ export default function App() {
   const handleSeparatorMouseDown = (e) => {
     e.preventDefault();
     const handleMouseMove = (moveEvent) => {
-      const maxAllowedWidth = window.innerWidth * 0.25; // Capped max bounds at 35% viewport width
-      const newWidth = Math.max(240, Math.min(maxAllowedWidth, moveEvent.clientX));
+      const maxAllowedWidth = 300; // Hard stop max boundary cap
+      const newWidth = Math.max(220, Math.min(maxAllowedWidth, moveEvent.clientX));
       setSidebarWidth(newWidth);
     };
     const handleMouseUp = () => {
@@ -159,7 +158,7 @@ export default function App() {
 
       <div className="flex flex-1 overflow-hidden w-full relative">
         
-        {/* Left Sidebar Layout (Dynamic Size) */}
+        {/* Left Sidebar Layout */}
         <div style={{ width: `${sidebarWidth}px` }} className="shrink-0 h-full overflow-hidden">
           <TranscriptSidebar 
             captions={captions} 
@@ -170,15 +169,17 @@ export default function App() {
           />
         </div>
 
-        {/* Draggable Width Separator Handle Bar */}
+        {/* Vertical Width Separator Handle Bar */}
         <div 
           onMouseDown={handleSeparatorMouseDown}
           className="w-1.5 h-full bg-zinc-900 hover:bg-indigo-500/80 active:bg-indigo-500 cursor-col-resize transition-colors duration-150 relative z-40 shrink-0 after:content-[''] after:absolute after:inset-y-0 after:-left-1 after:-right-1"
         />
 
-        {/* Center/Right Layout Canvas Workspace */}
+        {/* Center Canvas + Bottom Timeline Panel Stack Area */}
         <main className="flex-1 flex flex-col bg-zinc-950 overflow-hidden min-w-0">
-          <div className="flex-1 grid grid-cols-1 lg:grid-cols-4 p-6 gap-6 min-h-0 relative">
+          
+          {/* Main Top Content Area */}
+          <div className="flex-1 grid grid-cols-1 lg:grid-cols-4 p-6 gap-6 min-h-0 relative overflow-hidden">
             
             {/* Loading Indicator */}
             {isLoading && (
@@ -217,7 +218,7 @@ export default function App() {
                   <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 truncate">Caption Presets</h3>
                 </div>
                 
-                {/* Fixed Icon Toggle Switch Button (No-Squish Layout) */}
+                {/* Fixed Non-Squishing Custom Trigger Button */}
                 <button
                   onClick={() => setCaptionStyles(prev => ({ 
                     ...prev, 
@@ -240,8 +241,8 @@ export default function App() {
 
               {/* Dynamic View Selector */}
               {captionStyles.isEditingCustom ? (
-                /* VIEW 1: Custom Font Suite Panel (WEIGHT OPTION REMOVED) */
-                <div className="space-y-3 text-zinc-300 select-none">
+                /* VIEW 1: Custom Font Suite Panel (ALL STYLING CONTROLS BACK & ACTIVE) */
+                <div className="space-y-3 text-zinc-300 select-none animate-fadeIn">
                   
                   <div className="flex flex-col gap-1">
                     <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wide">Font Family</label>
@@ -257,7 +258,6 @@ export default function App() {
                     </select>
                   </div>
 
-                  {/* Size Layout (Expanded to 100% block view since weight dropdown was removed) */}
                   <div className="flex flex-col gap-1">
                     <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wide">Size</label>
                     <select
@@ -346,14 +346,30 @@ export default function App() {
             </div>
           </div>
 
-          <TimelineTrack 
-            captions={captions} 
-            currentTime={currentTime} 
-            duration={duration} 
-            activeId={activeId}
-            onSeek={handleTimelineSeek}
-            onUpdateCaptions={handleUpdateCaptionsBulk}
-          />
+          {/* CLICKABLE TOGGLE SLIDE BAR KEY TRIGGER */}
+          <button 
+            onClick={() => setIsTimelineOpen(!isTimelineOpen)}
+            className="h-3 w-full bg-zinc-900 border-t border-zinc-800 hover:bg-zinc-800/60 flex items-center justify-center transition-all group shrink-0"
+          >
+            <div className="flex items-center gap-2 text-zinc-500 group-hover:text-zinc-300">
+              {isTimelineOpen ? <ChevronDown className="w-2 h-2" /> : <ChevronUp className="w-2 h-2" />}
+            </div>
+          </button>
+
+          {/* SMOOTH ANIMATED SLIDING TIMELINE PANEL CONTAINER */}
+          <div 
+            style={{ height: isTimelineOpen ? '180px' : '0px' }} 
+            className="shrink-0 w-full bg-zinc-900 overflow-hidden transition-[height] duration-300 ease-in-out"
+          >
+            <TimelineTrack 
+              captions={captions} 
+              currentTime={currentTime} 
+              duration={duration} 
+              activeId={activeId}
+              onSeek={handleTimelineSeek}
+              onUpdateCaptions={handleUpdateCaptionsBulk}
+            />
+          </div>
         </main>
       </div>
     </div>
