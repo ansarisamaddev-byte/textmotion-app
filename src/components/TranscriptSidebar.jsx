@@ -3,6 +3,9 @@ import { Type, Plus, Trash2 } from 'lucide-react';
 
 export default function TranscriptSidebar({ captions, activeId, onUpdate, onAdd, onDelete }) {
   return (
+
+
+    <div className="w-full h-full border-r border-zinc-900 bg-zinc-950/40 flex flex-col p-4 overflow-y-auto">
     <aside className="w-[380px] border-r border-zinc-800 bg-zinc-900/20 flex flex-col h-full flex-shrink-0">
       <div className="p-4 border-b border-zinc-800 flex items-center justify-between bg-zinc-900/40">
         <div className="flex items-center gap-2">
@@ -62,5 +65,6 @@ export default function TranscriptSidebar({ captions, activeId, onUpdate, onAdd,
         ))}
       </div>
     </aside>
+  </div>
   );
 }

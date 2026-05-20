@@ -20,53 +20,54 @@ export default function App() {
   const [activeId, setActiveId] = useState(null);
   const [stylePreset, setStylePreset] = useState('bold-yellow');
   const [isLoading, setIsLoading] = useState(false);
-
+  const [sidebarWidth, setSidebarWidth] = useState(320);
   const videoRef = useRef(null);
+  
 
   // Synchronize dynamic subtitle highlighting based on timestamps
   useEffect(() => {
     const matching = captions.find(c => currentTime >= c.start && currentTime <= c.end);
     setActiveId(matching ? matching.id : null);
   }, [currentTime, captions]);
-// Asynchronous network hook to pull live transcribed text layers
-useEffect(() => {
-  let isCurrentRequest = true;
+  // Asynchronous network hook to pull live transcribed text layers
+  useEffect(() => {
+    let isCurrentRequest = true;
 
-  const fetchTranscribedCaptions = async () => {
-    setIsLoading(true);
-    console.log("Triggering network fetch instance to Beeceptor...");
-    try {
-      const response = await fetch('https://textmotion-test.free.beeceptor.com/v1/captions');
-      const data = await response.json();
-      console.log("Network layer execution result:", data);
-      
-      // UPDATED PARSING STRATEGY: Target data.words instead of data.segments
-      if (isCurrentRequest && data && data.words) {
-        const formattedData = data.words.map((item, index) => ({
-          // Ensure your UI components receive a predictable, unified interface
-          id: item.id || `cap_${index}_${Date.now()}`,
-          text: item.word || '', // Map 'word' key into 'text' property for components
-          start: parseFloat(item.start ?? 0),
-          end: parseFloat(item.end ?? 0),
-        }));
+    const fetchTranscribedCaptions = async () => {
+      setIsLoading(true);
+      console.log("Triggering network fetch instance to Beeceptor...");
+      try {
+        const response = await fetch('https://textmotion-test.free.beeceptor.com/v1/captions');
+        const data = await response.json();
+        console.log("Network layer execution result:", data);
         
-        setCaptions(formattedData);
+        // UPDATED PARSING STRATEGY: Target data.words instead of data.segments
+        if (isCurrentRequest && data && data.words) {
+          const formattedData = data.words.map((item, index) => ({
+            // Ensure your UI components receive a predictable, unified interface
+            id: item.id || `cap_${index}_${Date.now()}`,
+            text: item.word || '', // Map 'word' key into 'text' property for components
+            start: parseFloat(item.start ?? 0),
+            end: parseFloat(item.end ?? 0),
+          }));
+          
+          setCaptions(formattedData);
+        }
+      } catch (error) {
+        console.error("Failed fetching processing layers:", error);
+      } finally {
+        if (isCurrentRequest) {
+          setIsLoading(false);
+        }
       }
-    } catch (error) {
-      console.error("Failed fetching processing layers:", error);
-    } finally {
-      if (isCurrentRequest) {
-        setIsLoading(false);
-      }
-    }
-  };
+    };
 
-  fetchTranscribedCaptions();
+    fetchTranscribedCaptions();
 
-  return () => {
-    isCurrentRequest = false;
-  };
-}, []);
+    return () => {
+      isCurrentRequest = false;
+    };
+  }, []);
 
   const handleVideoUpload = (e) => {
     const file = e.target.files[0];
@@ -118,24 +119,50 @@ useEffect(() => {
     }
   };
 
+  const handleSeparatorMouseDown = (e) => {
+    e.preventDefault();
+    
+    const handleMouseMove = (moveEvent) => {
+      // Enforce minimum width of 240px and maximum width of 480px
+      const newWidth = Math.max(240, Math.min(480, moveEvent.clientX));
+      setSidebarWidth(newWidth);
+    };
+
+    const handleMouseUp = () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  };
+
   return (
     <div className="flex flex-col h-screen bg-zinc-950 text-zinc-100 font-sans select-none overflow-hidden">
       <WorkspaceHeader onVideoUpload={handleVideoUpload} />
 
-      <div className="flex flex-1 overflow-hidden">
-        <TranscriptSidebar 
-          captions={captions} 
-          activeId={activeId} 
-          onUpdate={handleUpdateCaption} 
-          onAdd={handleAddBlock} 
-          onDelete={handleDeleteBlock} 
+      <div className="flex flex-1 overflow-hidden w-full relative">
+        
+        {/* Left Side Panel Content - Bound to dynamic style width constraints */}
+        <div style={{ width: `${sidebarWidth}px` }} className="shrink-0 h-full overflow-hidden">
+          <TranscriptSidebar 
+            captions={captions} 
+            activeId={activeId} 
+            onUpdate={handleUpdateCaption} 
+            onAdd={handleAddBlock} 
+            onDelete={handleDeleteBlock} 
+          />
+        </div>
+
+        {/* DRAGGABLE SEPARATOR: Vertical split line anchor point track */}
+        <div 
+          onMouseDown={handleSeparatorMouseDown}
+          className="w-1.5 h-full bg-zinc-900 hover:bg-indigo-500/80 active:bg-indigo-500 cursor-col-resize transition-colors duration-150 relative z-40 shrink-0 select-none after:content-[''] after:absolute after:inset-y-0 after:-left-1 after:-right-1"
         />
 
-        <main className="flex-1 flex flex-col bg-zinc-950 overflow-hidden">
-          {/* FIXED: Adjusted grid layout bounds from grid-cols-3 to grid-cols-4 for proper column spacing alignment */}
+        {/* Main Production Canvas and Workspace Panel */}
+        <main className="flex-1 flex flex-col bg-zinc-950 overflow-hidden min-w-0">
           <div className="flex-1 grid grid-cols-1 lg:grid-cols-4 p-6 gap-6 min-h-0 relative">
-            
-            {/* Loading Overlay State Indicator */}
             {isLoading && (
               <div className="absolute inset-0 bg-zinc-950/80 backdrop-blur-sm z-50 flex items-center justify-center rounded-2xl border border-zinc-800">
                 <div className="flex flex-col items-center gap-3">
@@ -145,7 +172,6 @@ useEffect(() => {
               </div>
             )}
 
-            {/* FIXED: Added lg:col-span-3 so the Video viewport properly stretches across the remaining workspace area */}
             <div className="lg:col-span-3 min-h-0 flex flex-col relative">
               <VideoViewport 
                 videoSrc={videoSrc}
@@ -161,7 +187,6 @@ useEffect(() => {
               />
             </div>
 
-            {/* Subtitle Presets Column - Takes exactly 1 column space */}
             <div className="lg:col-span-1 bg-zinc-900/30 border border-zinc-800/60 rounded-2xl p-4 flex flex-col gap-4 h-full overflow-y-auto">
               <div className="flex items-center gap-2 border-b border-zinc-800 pb-2">
                 <Layers className="w-4 h-4 text-indigo-400" />
@@ -195,6 +220,7 @@ useEffect(() => {
             duration={duration} 
             activeId={activeId}
             onSeek={handleTimelineSeek}
+            onUpdateCaptions={(id, fields) => setCaptions(prev => prev.map(c => c.id === id ? { ...c, ...fields } : c))}
           />
         </main>
       </div>
