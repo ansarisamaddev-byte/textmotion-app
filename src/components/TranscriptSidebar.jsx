@@ -1,7 +1,15 @@
 import React from 'react';
 import { Trash2, Plus } from 'lucide-react';
 
-export default function TranscriptSidebar({ captions, activeId, onUpdate, onAdd, onDelete }) {
+export default function TranscriptSidebar({ 
+  captions, 
+  activeId, 
+  selectedIds = [], // Added default state to prevent mapping errors
+  onSelectCaption,  // Added selection handler
+  onUpdate, 
+  onAdd, 
+  onDelete 
+}) {
   return (
     <div className="w-full h-full border-r border-zinc-900 bg-zinc-950 flex flex-col p-3 min-w-0">
       
@@ -23,14 +31,20 @@ export default function TranscriptSidebar({ captions, activeId, onUpdate, onAdd,
       <div className="flex-1 overflow-y-auto space-y-2 pr-1 min-w-0 custom-scrollbar">
         {captions.map((cap) => {
           const isActive = cap.id === activeId;
+          // Check if this item is currently part of the multi-select pool
+          const isSelected = selectedIds.includes(cap.id);
           
           return (
             <div
               key={cap.id}
-              className={`p-2.5 rounded-xl border transition-all duration-200 flex flex-col gap-2 min-w-0 ${
-                isActive
-                  ? 'bg-indigo-600/10 border-indigo-500/80 shadow-md shadow-indigo-950/20'
-                  : 'bg-zinc-900/20 border-zinc-900 hover:border-zinc-800'
+              // Triggers multi-selection handler while forwarding the browser click event
+              onClick={(e) => onSelectCaption && onSelectCaption(cap.id, e)}
+              className={`p-2.5 rounded-xl border cursor-pointer transition-all duration-150 flex flex-col gap-2 min-w-0 ${
+                isSelected
+                  ? 'bg-indigo-600/10 border-indigo-500 shadow-md ring-1 ring-indigo-500/30'
+                  : isActive
+                    ? 'bg-zinc-800/50 border-zinc-700 text-zinc-200'
+                    : 'bg-zinc-900/20 border-zinc-900 hover:border-zinc-800 text-zinc-400'
               }`}
             >
               {/* Top Row Controls: Inputs and Trash Can Icon */}
@@ -42,6 +56,7 @@ export default function TranscriptSidebar({ captions, activeId, onUpdate, onAdd,
                       type="number"
                       step="0.1"
                       value={cap.start}
+                      onClick={(e) => e.stopPropagation()} // Prevents toggling selection pool state when clicking field
                       onChange={(e) => onUpdate(cap.id, 'start', e.target.value)}
                       className="w-full bg-transparent text-[10px] font-mono text-zinc-300 focus:outline-none min-w-0"
                     />
@@ -52,6 +67,7 @@ export default function TranscriptSidebar({ captions, activeId, onUpdate, onAdd,
                       type="number"
                       step="0.1"
                       value={cap.end}
+                      onClick={(e) => e.stopPropagation()} // Prevents toggling selection pool state when clicking field
                       onChange={(e) => onUpdate(cap.id, 'end', e.target.value)}
                       className="w-full bg-transparent text-[10px] font-mono text-zinc-300 focus:outline-none min-w-0"
                     />
@@ -59,7 +75,10 @@ export default function TranscriptSidebar({ captions, activeId, onUpdate, onAdd,
                 </div>
 
                 <button
-                  onClick={() => onDelete(cap.id)}
+                  onClick={(e) => {
+                    e.stopPropagation(); // Prevents deletion click from selecting the row before removal
+                    onDelete(cap.id);
+                  }}
                   className="p-1.5 rounded-md hover:bg-red-500/10 text-zinc-500 hover:text-red-400 transition-colors shrink-0"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
@@ -71,6 +90,7 @@ export default function TranscriptSidebar({ captions, activeId, onUpdate, onAdd,
                 <textarea
                   value={cap.text}
                   rows={1}
+                  onClick={(e) => e.stopPropagation()} // Prevents selection tracking from interrupting active editing focus
                   onChange={(e) => onUpdate(cap.id, 'text', e.target.value)}
                   className="w-full bg-zinc-900/40 border border-zinc-800/50 hover:border-zinc-800 focus:border-indigo-500/50 rounded-lg p-2 text-[11px] text-zinc-200 placeholder-zinc-600 focus:outline-none resize-none transition-all dynamic-text-wrap"
                   placeholder="Enter lyric or narration segment..."

@@ -6,9 +6,18 @@ import TimelineTrack from './components/TimelineTrack';
 import { Layers, Edit3, X, ChevronUp, ChevronDown } from 'lucide-react';
 
 const INITIAL_CAPTIONS = [
-  { id: '1', start: 0.0, end: 2.5, text: "Welcome to TextMotion project dashboard!" },
-  { id: '2', start: 2.6, end: 5.5, text: "This is a clean, modular React implementation." },
-  { id: '3', start: 5.6, end: 9.0, text: "Ready to scale with your custom enhancements." }
+  { 
+    id: '1', start: 0.0, end: 2.5, text: "Welcome to TextMotion project dashboard!",
+    fontFamily: 'Impact, Arial Black, sans-serif', fontSize: '48px', fontWeight: '900', fontStyle: 'normal', color: '#fbbf24', textTransform: 'uppercase'
+  },
+  { 
+    id: '2', start: 2.6, end: 5.5, text: "This is a clean, modular React implementation.",
+    fontFamily: 'Impact, Arial Black, sans-serif', fontSize: '48px', fontWeight: '900', fontStyle: 'normal', color: '#fbbf24', textTransform: 'uppercase'
+  },
+  { 
+    id: '3', start: 5.6, end: 9.0, text: "Ready to scale with your custom enhancements.",
+    fontFamily: 'Impact, Arial Black, sans-serif', fontSize: '48px', fontWeight: '900', fontStyle: 'normal', color: '#fbbf24', textTransform: 'uppercase'
+  }
 ];
 
 export default function App() {
@@ -20,10 +29,11 @@ export default function App() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [activeId, setActiveId] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [selectedIds, setSelectedIds] = useState([]);
 
   // Layout Sizing States
   const [sidebarWidth, setSidebarWidth] = useState(220); 
-  const [isTimelineOpen, setIsTimelineOpen] = useState(true); // Control slide up/down state
+  const [isTimelineOpen, setIsTimelineOpen] = useState(true);
 
   // Combined Advanced Typography State Object
   const [captionStyles, setCaptionStyles] = useState({
@@ -52,7 +62,7 @@ export default function App() {
     const fetchTranscribedCaptions = async () => {
       setIsLoading(true);
       try {
-        const response = await fetch('https://textmotion-test.free.beeceptor.com/v1/captions');
+        const response = await fetch('https://caption-data-webhook.free.beeceptor.com/v1/captions');
         const data = await response.json();
         
         if (isCurrentRequest && data && data.words) {
@@ -134,13 +144,14 @@ export default function App() {
 
   const handleDeleteBlock = (id) => {
     setCaptions(prev => prev.filter(c => c.id !== id));
+    setSelectedIds(prev => prev.filter(item => item !== id));
   };
 
   // Draggable Left Sidebar Splitting Handler
   const handleSeparatorMouseDown = (e) => {
     e.preventDefault();
     const handleMouseMove = (moveEvent) => {
-      const maxAllowedWidth = 300; // Hard stop max boundary cap
+      const maxAllowedWidth = 300;
       const newWidth = Math.max(220, Math.min(maxAllowedWidth, moveEvent.clientX));
       setSidebarWidth(newWidth);
     };
@@ -151,6 +162,96 @@ export default function App() {
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
   };
+
+  const handleSelectCaption = (id, event) => {
+  if (event.metaKey || event.ctrlKey) {
+    // Multi-select toggle
+    setSelectedIds(prev => {
+      const isAlreadySelected = prev.includes(id);
+      return isAlreadySelected ? prev.filter(item => item !== id) : [...prev, id];
+    });
+  } else if (event.shiftKey && selectedIds.length > 0) {
+    // Multi-select range
+    const lastSelected = selectedIds[selectedIds.length - 1];
+    const currentIndex = captions.findIndex(c => c.id === id);
+    const lastIndex = captions.findIndex(c => c.id === lastSelected);
+    const start = Math.min(currentIndex, lastIndex);
+    const end = Math.max(currentIndex, lastIndex);
+    const rangeIds = captions.slice(start, end + 1).map(c => c.id);
+    setSelectedIds(prev => Array.from(new Set([...prev, ...rangeIds])));
+  } else {
+    // Single select: Load this specific caption's styling metrics directly into the control panel
+    setSelectedIds([id]);
+    setActiveId(id);
+
+    const targetedCaption = captions.find(c => c.id === id);
+    if (targetedCaption) {
+      setCaptionStyles(prev => ({
+        ...prev,
+        fontFamily: targetedCaption.fontFamily || 'Impact, Arial Black, sans-serif',
+        fontSize: targetedCaption.fontSize || '48px',
+        fontWeight: targetedCaption.fontWeight || '900',
+        fontStyle: targetedCaption.fontStyle || 'normal',
+        color: targetedCaption.color || '#fbbf24',
+        textTransform: targetedCaption.textTransform || 'uppercase',
+      }));
+    }
+  }
+};
+  // Consolidated Single Custom Change Event for full bulk synchronization
+const handleCustomStyleChange = (field, value) => {
+  // 1. Keep the right panel inputs visually updated
+  setCaptionStyles(prev => ({ ...prev, preset: 'custom', [field]: value }));
+  
+  // 2. ONLY mutate the caption data if they are actively highlighted in selectedIds
+  if (selectedIds.length > 0) {
+    setCaptions(prev => prev.map(c => 
+      selectedIds.includes(c.id) ? { ...c, [field]: value } : c
+    ));
+  }
+};
+
+  function setThemePreset(preset) {
+    setCaptionStyles(prev => ({
+      ...prev,
+      preset: preset.id,
+      fontFamily: preset.font,
+      fontSize: preset.size,
+      fontWeight: preset.weight,
+      color: preset.color,
+      textTransform: preset.trans,
+      fontStyle: preset.style
+    }));
+
+    if (selectedIds.length > 0) {
+      setCaptions(prev => prev.map(c => {
+        if (selectedIds.includes(c.id)) {
+          return {
+            ...c,
+            fontFamily: preset.font,
+            fontSize: preset.size,
+            fontWeight: preset.weight,
+            color: preset.color,
+            textTransform: preset.trans,
+            fontStyle: preset.style
+          };
+        }
+        return c;
+      }));
+    }
+  }
+
+  const currentActiveCaption = captions.find(c => c.id === activeId);
+
+// Merge individual caption custom styles with active control panel states safely
+const activeViewportStyles = currentActiveCaption ? {
+  fontFamily: currentActiveCaption.fontFamily || captionStyles.fontFamily,
+  fontSize: currentActiveCaption.fontSize || captionStyles.fontSize,
+  fontWeight: currentActiveCaption.fontWeight || captionStyles.fontWeight,
+  fontStyle: currentActiveCaption.fontStyle || captionStyles.fontStyle,
+  color: currentActiveCaption.color || captionStyles.color,
+  textTransform: currentActiveCaption.textTransform || captionStyles.textTransform,
+} : captionStyles;
 
   return (
     <div className="flex flex-col h-screen bg-zinc-950 text-zinc-100 font-sans select-none overflow-hidden">
@@ -163,6 +264,8 @@ export default function App() {
           <TranscriptSidebar 
             captions={captions} 
             activeId={activeId} 
+            selectedIds={selectedIds}
+            onSelectCaption={handleSelectCaption}
             onUpdate={handleUpdateCaption} 
             onAdd={handleAddBlock} 
             onDelete={handleDeleteBlock} 
@@ -218,7 +321,6 @@ export default function App() {
                   <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 truncate">Caption Presets</h3>
                 </div>
                 
-                {/* Fixed Non-Squishing Custom Trigger Button */}
                 <button
                   onClick={() => setCaptionStyles(prev => ({ 
                     ...prev, 
@@ -231,25 +333,21 @@ export default function App() {
                   }`}
                   title={captionStyles.isEditingCustom ? "Close Custom Controls" : "Open Custom Controls"}
                 >
-                  {captionStyles.isEditingCustom ? (
-                    <X className="w-3.5 h-3.5 shrink-0" />
-                  ) : (
-                    <Edit3 className="w-3.5 h-3.5 shrink-0" />
-                  )}
+                  {captionStyles.isEditingCustom ? <X className="w-3.5 h-3.5" /> : <Edit3 className="w-3.5 h-3.5" />}
                 </button>
               </div>
 
               {/* Dynamic View Selector */}
               {captionStyles.isEditingCustom ? (
-                /* VIEW 1: Custom Font Suite Panel (ALL STYLING CONTROLS BACK & ACTIVE) */
+                /* VIEW 1: Custom Font Suite Panel */
                 <div className="space-y-3 text-zinc-300 select-none animate-fadeIn">
                   
                   <div className="flex flex-col gap-1">
                     <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wide">Font Family</label>
                     <select
                       value={captionStyles.fontFamily}
-                      onChange={(e) => setCaptionStyles(prev => ({ ...prev, preset: 'custom', fontFamily: e.target.value }))}
-                      className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2 text-xs text-zinc-200 focus:outline-none focus:border-indigo-500"
+                      onChange={(e) => handleCustomStyleChange('fontFamily', e.target.value)}
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2 pr-8 text-xs text-zinc-200 focus:outline-none focus:border-indigo-500"
                     >
                       <option value="Impact, Arial Black, sans-serif">KINETIC (Impact)</option>
                       <option value="'Courier New', Courier, monospace">SYSTEM COURIER</option>
@@ -262,8 +360,8 @@ export default function App() {
                     <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wide">Size</label>
                     <select
                       value={captionStyles.fontSize}
-                      onChange={(e) => setCaptionStyles(prev => ({ ...prev, preset: 'custom', fontSize: e.target.value }))}
-                      className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2 text-xs text-zinc-200 focus:outline-none"
+                      onChange={(e) => handleCustomStyleChange('fontSize', e.target.value)}
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2 pr-8 text-xs text-zinc-200 focus:outline-none"
                     >
                       <option value="12px">12px</option>
                       <option value="24px">24px</option>
@@ -277,19 +375,19 @@ export default function App() {
                     <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wide">Styles</label>
                     <div className="grid grid-cols-3 gap-1">
                       <button
-                        onClick={() => setCaptionStyles(prev => ({ ...prev, preset: 'custom', fontWeight: prev.fontWeight === '700' ? '400' : '700' }))}
+                        onClick={() => handleCustomStyleChange('fontWeight', captionStyles.fontWeight === '700' ? '400' : '700')}
                         className={`py-2 rounded-lg border text-xs font-bold transition-all ${captionStyles.fontWeight === '700' ? 'bg-zinc-800 border-zinc-600 text-white' : 'bg-zinc-950/40 border-zinc-800 text-zinc-500'}`}
                       >
                         B
                       </button>
                       <button
-                        onClick={() => setCaptionStyles(prev => ({ ...prev, preset: 'custom', fontStyle: prev.fontStyle === 'italic' ? 'normal' : 'italic' }))}
+                        onClick={() => handleCustomStyleChange('fontStyle', captionStyles.fontStyle === 'italic' ? 'normal' : 'italic')}
                         className={`py-2 rounded-lg border text-xs italic font-serif transition-all ${captionStyles.fontStyle === 'italic' ? 'bg-zinc-800 border-zinc-600 text-white' : 'bg-zinc-950/40 border-zinc-800 text-zinc-500'}`}
                       >
                         I
                       </button>
                       <button
-                        onClick={() => setCaptionStyles(prev => ({ ...prev, preset: 'custom', textTransform: prev.textTransform === 'uppercase' ? 'none' : 'uppercase' }))}
+                        onClick={() => handleCustomStyleChange('textTransform', captionStyles.textTransform === 'uppercase' ? 'none' : 'uppercase')}
                         className={`py-2 rounded-lg border text-xs font-mono transition-all ${captionStyles.textTransform === 'uppercase' ? 'bg-zinc-800 border-zinc-600 text-white' : 'bg-zinc-950/40 border-zinc-800 text-zinc-500'}`}
                       >
                         TT
@@ -308,7 +406,7 @@ export default function App() {
                       ].map(colorOpt => (
                         <button
                           key={colorOpt.hex}
-                          onClick={() => setCaptionStyles(prev => ({ ...prev, preset: 'custom', color: colorOpt.hex }))}
+                          onClick={() => handleCustomStyleChange('color', colorOpt.hex)}
                           className="w-6 h-6 rounded-full border border-zinc-800 transition-transform active:scale-90 relative shrink-0"
                           style={{ backgroundColor: colorOpt.hex }}
                         >
@@ -322,7 +420,7 @@ export default function App() {
 
                 </div>
               ) : (
-                /* VIEW 2: Default Simple/Fast Micro Presets List View */
+                /* VIEW 2: Default Presets List View */
                 <div className="space-y-3">
                   {[
                     { id: 'bold-yellow', label: '🔥 Bold Kinetic (Yellow)', font: 'Impact, Arial Black, sans-serif', size: '48px', weight: '900', color: '#fbbf24', trans: 'uppercase', style: 'normal' },
@@ -374,18 +472,4 @@ export default function App() {
       </div>
     </div>
   );
-
-  // Small internal helper layout mapping updater
-  function setThemePreset(preset) {
-    setCaptionStyles(prev => ({
-      ...prev,
-      preset: preset.id,
-      fontFamily: preset.font,
-      fontSize: preset.size,
-      fontWeight: preset.weight,
-      color: preset.color,
-      textTransform: preset.trans,
-      fontStyle: preset.style
-    }));
-  }
 }
