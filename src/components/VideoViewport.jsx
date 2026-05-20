@@ -1,65 +1,48 @@
 import React from 'react';
 import { Play, Pause, Video } from 'lucide-react';
 
-export default function VideoViewport({ 
-  videoSrc, videoRef, isPlaying, currentTime, duration, activeCaption, stylePreset, onTogglePlay, onTimeUpdate, onLoadedMetadata 
-}) {
-  
-  const getStylePresetClass = () => {
-    switch (stylePreset) {
-      case 'bold-yellow':
-        return 'text-yellow-400 font-extrabold text-2xl uppercase tracking-wider drop-shadow-[0_4px_4px_rgba(0,0,0,0.9)]';
-      case 'cyber-neon':
-        return 'text-cyan-400 font-black text-2xl italic tracking-tight drop-shadow-[0_0_10px_rgba(34,211,238,0.8)]';
-      case 'minimal-white':
-        return 'text-white font-semibold text-base bg-black/75 px-4 py-1.5 rounded-lg text-center shadow-lg';
-      default:
-        return 'text-white font-bold text-xl';
-    }
-  };
-
+export default function VideoViewport({ videoSrc, videoRef, isPlaying, currentTime, duration, activeCaption, captionStyles, onTogglePlay, onTimeUpdate, onLoadedMetadata }) {
   return (
-    <div className="lg:col-span-2 flex flex-col items-center justify-center bg-zinc-900/20 rounded-2xl border border-zinc-800/50 p-4 relative min-h-0">
-      <div className="aspect-[9/16] h-full max-h-[420px] bg-black rounded-xl overflow-hidden shadow-2xl relative border border-zinc-800 flex items-center justify-center">
+    <div className="flex-1 bg-zinc-900 rounded-2xl border border-zinc-800 relative overflow-hidden flex flex-col justify-between shadow-2xl">
+      
+      {/* Video Screen Layout Surface area */}
+      <div className="flex-1 relative flex items-center justify-center bg-black/40">
         {videoSrc ? (
           <video
             ref={videoRef}
             src={videoSrc}
-            className="w-full h-full object-cover"
             onTimeUpdate={onTimeUpdate}
             onLoadedMetadata={onLoadedMetadata}
+            className="max-h-[420px] object-contain rounded-xl shadow-lg"
             onClick={onTogglePlay}
           />
         ) : (
-          <div className="text-center p-6 flex flex-col items-center gap-3">
-            <div className="p-4 bg-zinc-900 rounded-full text-zinc-500 border border-zinc-800">
-              <Video className="w-6 h-6" />
-            </div>
-            <p className="text-xs text-zinc-400 max-w-[180px] leading-relaxed">
-              Load a portrait video file to initialize your canvas sequence tracking.
-            </p>
-          </div>
+          <div className="text-zinc-600 text-xs font-mono">Load a media clip to mount canvas context...</div>
         )}
 
-        {/* Caption Layer Rendering */}
-        {activeCaption && (
-          <div className="absolute inset-x-4 bottom-24 flex justify-center pointer-events-none text-center z-20">
-            <span className={getStylePresetClass()}>
+        {/* Dynamic Display Overlap Engine Layer */}
+        {activeCaption && captionStyles && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none p-10 z-30">
+            <h1 
+              style={{
+                fontFamily: captionStyles.fontFamily,
+                fontSize: captionStyles.fontSize,
+                fontWeight: captionStyles.fontWeight,
+                fontStyle: captionStyles.fontStyle,
+                color: captionStyles.color,
+                textTransform: captionStyles.textTransform,
+              }}
+              className={`text-center drop-shadow-[0_4px_8px_rgba(0,0,0,0.9)] transition-all duration-75 select-none ${
+                captionStyles.preset === 'cyber-neon' ? 'blur-[0.2px] animate-pulse' : ''
+              }`}
+            >
               {activeCaption.text}
-            </span>
+            </h1>
           </div>
         )}
       </div>
 
-      {/* Control Strip */}
-      <div className="w-full max-w-[280px] flex items-center justify-between mt-4 bg-zinc-900/90 border border-zinc-800/80 px-4 py-2 rounded-full backdrop-blur">
-        <button onClick={onTogglePlay} className="text-zinc-200 hover:text-white transition-all">
-          {isPlaying ? <Pause className="w-4 h-4 fill-white" /> : <Play className="w-4 h-4 fill-white" />}
-        </button>
-        <div className="text-[11px] font-mono text-zinc-400">
-          {currentTime.toFixed(2)}s / {duration.toFixed(2)}s
-        </div>
-      </div>
+      {/* Control Strip Layout Bar Container details below... */}
     </div>
   );
 }
