@@ -1,70 +1,85 @@
 import React from 'react';
-import { Type, Plus, Trash2 } from 'lucide-react';
+import { Trash2, Plus } from 'lucide-react';
 
 export default function TranscriptSidebar({ captions, activeId, onUpdate, onAdd, onDelete }) {
   return (
-
-
-    <div className="w-full h-full border-r border-zinc-900 bg-zinc-950/40 flex flex-col p-4 overflow-y-auto">
-    <aside className="w-[380px] border-r border-zinc-800 bg-zinc-900/20 flex flex-col h-full flex-shrink-0">
-      <div className="p-4 border-b border-zinc-800 flex items-center justify-between bg-zinc-900/40">
-        <div className="flex items-center gap-2">
-          <Type className="w-4 h-4 text-indigo-400" />
-          <h2 className="text-xs font-bold uppercase tracking-wider text-zinc-400">Captions Timelines</h2>
-        </div>
-        <button 
+    <div className="w-full h-full border-r border-zinc-900 bg-zinc-950 flex flex-col p-3 min-w-0">
+      
+      {/* Header Area with Flex Justification */}
+      <div className="flex items-center justify-between gap-2 mb-4 shrink-0 min-w-0">
+        <h2 className="text-xs font-bold uppercase tracking-wider text-zinc-400 truncate">
+          Captions
+        </h2>
+        <button
           onClick={onAdd}
-          className="flex items-center gap-1.5 bg-indigo-600/10 text-indigo-400 border border-indigo-500/20 hover:bg-indigo-600/20 px-2.5 py-1 rounded-md text-xs font-medium transition-all"
+          className="flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-medium py-1.5 px-3 rounded-lg transition-all active:scale-95 shrink-0"
         >
-          <Plus className="w-3.5 h-3.5" /> Add Block
+          <Plus className="w-3 h-3" />
+          <span className="inline">Block</span>
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
-        {captions.map((cap) => (
-          <div 
-            key={cap.id} 
-            className={`p-3 rounded-xl border transition-all duration-150 flex flex-col gap-2.5 ${
-              cap.id === activeId 
-                ? 'bg-zinc-800/80 border-indigo-500/60 shadow-md' 
-                : 'bg-zinc-900/40 border-zinc-800/80 hover:border-zinc-700'
-            }`}
-          >
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-1.5">
-                <input 
-                  type="number" 
-                  step="0.1"
-                  value={cap.start} 
-                  onChange={(e) => onUpdate(cap.id, 'start', e.target.value)}
-                  className="w-14 bg-zinc-950 border border-zinc-800 rounded px-1.5 py-0.5 text-[11px] font-mono text-zinc-400 text-center focus:outline-none focus:border-indigo-500"
-                />
-                <span className="text-zinc-600 text-xs">→</span>
-                <input 
-                  type="number" 
-                  step="0.1"
-                  value={cap.end} 
-                  onChange={(e) => onUpdate(cap.id, 'end', e.target.value)}
-                  className="w-14 bg-zinc-950 border border-zinc-800 rounded px-1.5 py-0.5 text-[11px] font-mono text-zinc-400 text-center focus:outline-none focus:border-indigo-500"
+      {/* Elastic Scrollable List Layer */}
+      <div className="flex-1 overflow-y-auto space-y-2 pr-1 min-w-0 custom-scrollbar">
+        {captions.map((cap) => {
+          const isActive = cap.id === activeId;
+          
+          return (
+            <div
+              key={cap.id}
+              className={`p-2.5 rounded-xl border transition-all duration-200 flex flex-col gap-2 min-w-0 ${
+                isActive
+                  ? 'bg-indigo-600/10 border-indigo-500/80 shadow-md shadow-indigo-950/20'
+                  : 'bg-zinc-900/20 border-zinc-900 hover:border-zinc-800'
+              }`}
+            >
+              {/* Top Row Controls: Inputs and Trash Can Icon */}
+              <div className="flex items-center gap-1.5 w-full min-w-0">
+                <div className="grid grid-cols-2 gap-1 flex-1 min-w-0">
+                  <div className="flex items-center bg-zinc-900/60 border border-zinc-800/80 rounded-md px-1.5 py-1 min-w-0">
+                    <span className="text-[9px] text-zinc-500 font-mono select-none mr-1 shrink-0">IN</span>
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={cap.start}
+                      onChange={(e) => onUpdate(cap.id, 'start', e.target.value)}
+                      className="w-full bg-transparent text-[10px] font-mono text-zinc-300 focus:outline-none min-w-0"
+                    />
+                  </div>
+                  <div className="flex items-center bg-zinc-900/60 border border-zinc-800/80 rounded-md px-1.5 py-1 min-w-0">
+                    <span className="text-[9px] text-zinc-500 font-mono select-none mr-1 shrink-0">OUT</span>
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={cap.end}
+                      onChange={(e) => onUpdate(cap.id, 'end', e.target.value)}
+                      className="w-full bg-transparent text-[10px] font-mono text-zinc-300 focus:outline-none min-w-0"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => onDelete(cap.id)}
+                  className="p-1.5 rounded-md hover:bg-red-500/10 text-zinc-500 hover:text-red-400 transition-colors shrink-0"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              {/* Dynamic Subtitle Textarea Block Input */}
+              <div className="w-full min-w-0">
+                <textarea
+                  value={cap.text}
+                  rows={1}
+                  onChange={(e) => onUpdate(cap.id, 'text', e.target.value)}
+                  className="w-full bg-zinc-900/40 border border-zinc-800/50 hover:border-zinc-800 focus:border-indigo-500/50 rounded-lg p-2 text-[11px] text-zinc-200 placeholder-zinc-600 focus:outline-none resize-none transition-all dynamic-text-wrap"
+                  placeholder="Enter lyric or narration segment..."
                 />
               </div>
-              <button 
-                onClick={() => onDelete(cap.id)}
-                className="text-zinc-500 hover:text-red-400 p-1 rounded hover:bg-zinc-800 transition-all"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
             </div>
-            <textarea
-              value={cap.text}
-              onChange={(e) => onUpdate(cap.id, 'text', e.target.value)}
-              className="w-full bg-zinc-950/60 border border-zinc-800/80 rounded-lg p-2 text-xs text-zinc-200 focus:outline-none focus:border-indigo-500/50 resize-none h-14 leading-relaxed"
-              placeholder="Type line text..."
-            />
-          </div>
-        ))}
+          );
+        })}
       </div>
-    </aside>
-  </div>
+    </div>
   );
 }

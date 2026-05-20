@@ -20,16 +20,14 @@ export default function App() {
   const [activeId, setActiveId] = useState(null);
   const [stylePreset, setStylePreset] = useState('bold-yellow');
   const [isLoading, setIsLoading] = useState(false);
-  const [sidebarWidth, setSidebarWidth] = useState(320);
+  const [sidebarWidth, setSidebarWidth] = useState(350);
   const videoRef = useRef(null);
   
-
-  // Synchronize dynamic subtitle highlighting based on timestamps
   useEffect(() => {
     const matching = captions.find(c => currentTime >= c.start && currentTime <= c.end);
     setActiveId(matching ? matching.id : null);
   }, [currentTime, captions]);
-  // Asynchronous network hook to pull live transcribed text layers
+  
   useEffect(() => {
     let isCurrentRequest = true;
 
@@ -124,7 +122,7 @@ export default function App() {
     
     const handleMouseMove = (moveEvent) => {
       // Enforce minimum width of 240px and maximum width of 480px
-      const newWidth = Math.max(240, Math.min(480, moveEvent.clientX));
+      const newWidth = Math.max(240, Math.min(300, moveEvent.clientX));
       setSidebarWidth(newWidth);
     };
 
