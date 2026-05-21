@@ -468,6 +468,7 @@ export default function App() {
             className="shrink-0 w-full bg-zinc-900 overflow-hidden transition-[height] duration-300 ease-in-out"
           >
             <TimelineTrack 
+              videoSrc={videoRef}
               captions={captions} 
               currentTime={currentTime} 
               duration={duration} 

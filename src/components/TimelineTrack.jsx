@@ -8,12 +8,17 @@ export default function TimelineTrack({ videoSrc, captions, currentTime, duratio
   const [thumbnails, setThumbnails] = useState([]);
   const [isGenerating, setIsGenerating] = useState(false);
 
+  // --- Core Filmstrip Generation Engine ---
   // 1. Programmatically extract frames from the video source file
   useEffect(() => {
+    // If no media is loaded yet, clear any existing thumbnails and stop
     if (!videoSrc || !duration || duration <= 0) {
       setThumbnails([]);
       return;
     }
+
+    let isCurrentGeneration = true; // Guard against rapid component re-renders
+    let hiddenVideo = null;
 
     const generateThumbnails = async () => {
       setIsGenerating(true);
@@ -21,52 +26,81 @@ export default function TimelineTrack({ videoSrc, captions, currentTime, duratio
       const numberOfThumbnails = 15; // Target density across the standard view
       const interval = duration / numberOfThumbnails;
 
-      // Create an isolated headless video element for background frame rendering
-      const hiddenVideo = document.createElement('video');
-      hiddenVideo.src = videoSrc;
-      hiddenVideo.muted = true;
-      hiddenVideo.playsInline = true;
-      hiddenVideo.crossOrigin = 'anonymous';
+      try {
+        // Create an isolated headless video element for background frame rendering
+        hiddenVideo = document.createElement('video');
+        hiddenVideo.src = videoSrc;
+        hiddenVideo.muted = true;
+        hiddenVideo.playsInline = true;
+        hiddenVideo.preload = 'auto';
+        hiddenVideo.crossOrigin = 'anonymous'; // Important for certain CORS restrictions
 
-      // Create a canvas to extract frames
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
+        // Create a canvas to extract frames
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
 
-      // Wait for metadata to load so we know dimensions
-      await new Promise((resolve) => {
-        hiddenVideo.onloadedmetadata = () => {
-          // Keep canvas dimensions reasonable for fast processing and low memory
-          canvas.width = 160;
-          canvas.height = 90;
-          resolve();
-        };
-      });
-
-      // Seek and snap pictures at discrete points
-      for (let i = 0; i < numberOfThumbnails; i++) {
-        const targetTime = i * interval;
-        hiddenVideo.currentTime = targetTime;
-
-        await new Promise((resolve) => {
-          hiddenVideo.onseeked = () => {
-            if (ctx) {
-              ctx.drawImage(hiddenVideo, 0, 0, canvas.width, canvas.height);
-              generatedImages.push({
-                time: targetTime,
-                url: canvas.toDataURL('image/jpeg', 0.6) // Compressed JPG for optimal UI performance
-              });
-            }
+        // Wait for metadata to load so we know dimensions
+        await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error("Timeout")), 3000);
+          hiddenVideo.onloadedmetadata = () => {
+            clearTimeout(timeout);
+            // Keep canvas dimensions reasonable for fast processing and low memory
+            canvas.width = 160;
+            canvas.height = 90;
             resolve();
           };
+          hiddenVideo.onerror = () => reject(hiddenVideo.error);
         });
-      }
 
-      setThumbnails(generatedImages);
-      setIsGenerating(false);
+        // Seek and snap pictures at discrete points
+        for (let i = 0; i < numberOfThumbnails; i++) {
+          if (!isCurrentGeneration) break;
+          
+          // Calculate target seek time and ensure it stays within bounds
+          const targetTime = Math.min(duration - 0.1, i * interval);
+          hiddenVideo.currentTime = targetTime;
+
+          await new Promise((resolve) => {
+            hiddenVideo.onseeked = () => {
+              if (ctx && isCurrentGeneration) {
+                // Draw the video frame onto the small canvas
+                ctx.drawImage(hiddenVideo, 0, 0, canvas.width, canvas.height);
+                generatedImages.push({
+                  time: targetTime,
+                  url: canvas.toDataURL('image/jpeg', 0.6) // Compressed JPG for optimal UI performance
+                });
+              }
+              resolve();
+            };
+          });
+        }
+
+        if (isCurrentGeneration) {
+          setThumbnails(generatedImages);
+        }
+      } catch (error) {
+        console.error("Frame extraction error:", error);
+      } finally {
+        if (isCurrentGeneration) {
+          setIsGenerating(false);
+        }
+        // Cleanup DOM element garbage safely
+        if (hiddenVideo) {
+          hiddenVideo.remove();
+        }
+      }
     };
 
     generateThumbnails();
-  }, [videoSrc, duration]);
+
+    // Clean up if component unmounts mid-generation
+    return () => {
+      isCurrentGeneration = false;
+      if (hiddenVideo) {
+        hiddenVideo.remove();
+      }
+    };
+  }, [videoSrc, duration]); // Triggers when a new video is loaded or duration changes
 
   // 2. Adjust click-to-seek formulas to account for the scaled scrollable container width
   const handleTrackClick = (e) => {
@@ -205,7 +239,7 @@ export default function TimelineTrack({ videoSrc, captions, currentTime, duratio
                 <div className="flex items-center gap-2 px-3 text-zinc-600 z-10">
                   <Film className="w-3.5 h-3.5" />
                   <span className="text-[10px] font-mono uppercase tracking-wider">
-                    {videoSrc ? "Loading sequence strip..." : "No Video context loaded"}
+                    {videoSrc ? "Processing filmstrip tracks..." : "No Video context loaded"}
                   </span>
                 </div>
               )}
