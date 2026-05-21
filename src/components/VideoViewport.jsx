@@ -1,221 +1,85 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Play, Pause, Maximize2, Volume2, ZoomIn, Move } from 'lucide-react';
+import React, { useEffect } from 'react';
+import { renderCaptionFrame } from '../App';
 
-export default function VideoViewport({ 
-  videoSrc, 
-  videoRef, 
-  isPlaying, 
-  currentTime, 
-  duration, 
-  activeCaption,    
-  captionStyles,    
-  onTogglePlay, 
-  onTimeUpdate, 
-  onLoadedMetadata 
+export default function VideoViewport({
+  videoSrc,
+  videoRef,
+  previewCanvasRef,
+  isPlaying,
+  currentTime,
+  duration,
+  activeCaption,
+  captions,
+  captionStyles,
+  onTogglePlay,
+  onTimeUpdate,
+  onLoadedMetadata
 }) {
-  // Pan and Zoom Tracking Vectors
-  const [zoomScale, setZoomScale] = useState(100);
-  const [panPosition, setPanPosition] = useState({ x: 0, y: 0 });
-  const [isDragging, setIsDragging] = useState(false);
-  
-  const dragStart = useRef({ x: 0, y: 0 });
-  const canvasRef = useRef(null);
 
-  const formatTime = (timeInSeconds) => {
-    if (isNaN(timeInSeconds)) return "0:00";
-    const mins = Math.floor(timeInSeconds / 60);
-    const secs = Math.floor(timeInSeconds % 60);
-    return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
-  };
-
-  const progressPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
-
-  const handleProgressBarClick = (e) => {
-    if (!videoRef.current || duration === 0) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const clickPositionX = e.clientX - rect.left;
-    const newTime = (clickPositionX / rect.width) * duration;
-    videoRef.current.currentTime = newTime;
-  };
-
-  // --- Pan Execution Flow (Drag and Drop Frame Logic) ---
-  const handleMouseDown = (e) => {
-    if (zoomScale <= 100 || !videoSrc) return;
-    setIsDragging(true);
-    dragStart.current = { x: e.clientX - panPosition.x, y: e.clientY - panPosition.y };
-  };
-
-  const handleMouseMove = (e) => {
-    if (!isDragging) return;
-    setPanPosition({
-      x: e.clientX - dragStart.current.x,
-      y: e.clientY - dragStart.current.y
-    });
-  };
-
-  const handleMouseUp = () => {
-    setIsDragging(false);
-  };
-
-  const handleResetView = () => {
-    setZoomScale(100);
-    setPanPosition({ x: 0, y: 0 });
-  };
-
+  // Live monitor execution loop feeding the display preview surface canvas
   useEffect(() => {
-    if (isDragging) {
-      window.addEventListener('mouseup', handleMouseUp);
+    const video = videoRef.current;
+    const canvas = previewCanvasRef.current;
+    if (!video || !canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    let frameId = null;
+
+    const loop = () => {
+      // Automatically adjust preview canvas internal size buffer to track raw content video source file dimensions
+      if (video.videoWidth && (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight)) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+      }
+
+      // Shared engine paint call
+      renderCaptionFrame(ctx, canvas, video, captions, captionStyles);
+      
+      if (!video.paused && !video.ended) {
+        frameId = requestAnimationFrame(loop);
+      }
+    };
+
+    if (isPlaying) {
+      frameId = requestAnimationFrame(loop);
+    } else {
+      // Force render single frame when paused or seeking timeline tracks
+      renderCaptionFrame(ctx, canvas, video, captions, captionStyles);
     }
-    return () => window.removeEventListener('mouseup', handleMouseUp);
-  }, [isDragging]);
+
+    return () => {
+      if (frameId) cancelAnimationFrame(frameId);
+    };
+  }, [isPlaying, currentTime, captions, captionStyles, videoSrc]);
 
   return (
-    <div className="relative flex-1 bg-zinc-900/40 border border-zinc-800/60 rounded-2xl overflow-hidden flex flex-col justify-between p-3 h-full min-h-0 select-none backdrop-blur-sm">
-      
-      {/* 1. Main Canvas Monitoring Deck */}
-      <div 
-        ref={canvasRef}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        className={`relative flex-1 flex items-center justify-center min-h-0 w-full rounded-xl bg-zinc-950 border border-zinc-900/60 overflow-hidden group shadow-inner ${
-          zoomScale > 100 && videoSrc ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
-        }`}
-      >
-        {/* Placeholder Screen: Rendered when no src exists */}
-        {!videoSrc && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-zinc-500 font-mono text-xs z-10 bg-zinc-950">
-            <span className="p-2.5 bg-zinc-900 rounded-xl border border-zinc-800 text-base">🎬</span>
-            <span>No active workspace sequence media loaded...</span>
-          </div>
-        )}
+    <div className="w-full h-full bg-zinc-900 rounded-2xl border border-zinc-800 flex items-center justify-center relative overflow-hidden p-2">
+      {/* HTML video element wrapper stays hidden out of view */}
+      <video
+        ref={videoRef}
+        src={videoSrc || undefined}
+        onTimeUpdate={onTimeUpdate}
+        onLoadedMetadata={onLoadedMetadata}
+        className="hidden"
+        playsInline
+        crossOrigin="anonymous"
+      />
 
-        {/* CRITICAL REFACTOR: Video tag is kept permanently mounted in the tree. 
-          This forces React refs and event bubbles to wire immediately upon boot.
-        */}
-        <div 
-          style={{ 
-            transform: `translate(${panPosition.x}px, ${panPosition.y}px) scale(${zoomScale / 100})`,
-            transformOrigin: 'center center',
-            display: videoSrc ? 'flex' : 'none' // Controlled via display property instead of structure destruction
-          }}
-          className="relative max-h-full max-w-full w-full h-full items-center justify-center transition-transform duration-75 ease-out pointer-events-none"
-        >
-          <video
-            ref={videoRef}
-            src={videoSrc || undefined}
-            onTimeUpdate={onTimeUpdate}
-            onLoadedMetadata={onLoadedMetadata}
-            onClick={(e) => {
-              if (zoomScale <= 100) onTogglePlay();
-            }}
-            className="max-h-full max-w-full object-contain pointer-events-auto"
-            playsInline
-            muted
+      {videoSrc ? (
+        <div className="relative max-w-full max-h-full aspect-[9/16] flex items-center justify-center shadow-2xl">
+          {/* 🔥 THE PREVIEW LAYER CANVAS SURFACE SCREEN */}
+          <canvas
+            ref={previewCanvasRef}
+            onClick={onTogglePlay}
+            className="max-w-full max-h-full object-contain rounded-xl cursor-pointer bg-black shadow-inner"
+            style={{ aspectRatio: '9/16' }}
           />
         </div>
-
-        {/* Floating Reset View Indicator Alert */}
-        {zoomScale > 100 && videoSrc && (
-          <button 
-            onClick={handleResetView}
-            className="absolute top-3 right-3 z-30 bg-zinc-900/80 hover:bg-zinc-800 text-[10px] text-zinc-400 hover:text-white font-mono px-2 py-1 rounded border border-zinc-800 transition backdrop-blur"
-          >
-            Reset View
-          </button>
-        )}
-
-        {/* 2. Captions Render Sub-Layer */}
-        {activeCaption && videoSrc && (
-          <div 
-            className="absolute bottom-6 left-1/2 -translate-x-1/2 text-center pointer-events-none select-none px-6 w-full max-w-[85%] z-20"
-            style={{
-              fontFamily: activeCaption.fontFamily || captionStyles.fontFamily,
-              fontSize: activeCaption.fontSize || captionStyles.fontSize,
-              fontWeight: activeCaption.fontWeight || captionStyles.fontWeight,
-              fontStyle: activeCaption.fontStyle || captionStyles.fontStyle,
-              color: activeCaption.color || captionStyles.color,
-              textTransform: activeCaption.textTransform || captionStyles.textTransform,
-              textShadow: '0px 2px 4px rgba(0,0,0,0.9), 0px 4px 12px rgba(0,0,0,0.5), -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000',
-              letterSpacing: '0.02em',
-              lineHeight: '1.2'
-            }}
-          >
-            {activeCaption.text}
-          </div>
-        )}
-      </div>
-
-      {/* 3. Transport Control Deck Area */}
-      <div className="flex flex-col gap-2.5 mt-3 pt-2 border-t border-zinc-900 shrink-0">
-        
-        {/* Scrub Track timeline bar */}
-        <div 
-          onClick={handleProgressBarClick}
-          className="w-full h-1 bg-zinc-800 hover:h-1.5 rounded-full cursor-pointer relative group transition-all duration-150"
-        >
-          <div 
-            style={{ width: `${progressPercent}%` }}
-            className="h-full bg-indigo-500 rounded-full relative"
-          >
-            <div className="absolute right-0 top-1/2 -translate-y-1/2 w-2.5 h-2.5 bg-white rounded-full shadow-lg scale-0 group-hover:scale-100 transition-transform duration-150" />
-          </div>
+      ) : (
+        <div className="text-center font-mono text-zinc-500 text-xs">
+          🎬 No active workspace video track data uploaded...
         </div>
-
-        {/* Controls Layout Toolbar */}
-        <div className="flex items-center justify-between w-full gap-4">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={onTogglePlay}
-              disabled={!videoSrc}
-              className={`p-1.5 rounded-lg border text-zinc-300 transition-all active:scale-90 disabled:opacity-20 disabled:pointer-events-none ${
-                isPlaying 
-                  ? 'bg-zinc-800 border-zinc-700 text-white shadow-md' 
-                  : 'bg-zinc-950 border-zinc-800 hover:text-white hover:border-zinc-700'
-              }`}
-            >
-              {isPlaying ? <Pause className="w-3.5 h-3.5 fill-current" /> : <Play className="w-3.5 h-3.5 fill-current" />}
-            </button>
-            
-            <div className="text-[11px] font-mono font-medium text-zinc-400 select-none tracking-tight">
-              <span className="text-zinc-200">{formatTime(currentTime)}</span>
-              <span className="text-zinc-600 mx-1">/</span>
-              <span className="text-zinc-500">{formatTime(duration)}</span>
-            </div>
-          </div>
-
-          {/* Dynamic Slider Console Panel */}
-          <div className="flex items-center gap-2 bg-zinc-950 border border-zinc-900 px-2 py-1 rounded-lg shrink-0">
-            {zoomScale > 100 ? <Move className="w-3 h-3 text-indigo-400" /> : <ZoomIn className="w-3 h-3 text-zinc-500" />}
-            <input 
-              type="range"
-              min="100" 
-              max="400" 
-              disabled={!videoSrc}
-              value={zoomScale}
-              onChange={(e) => {
-                const nextScale = Number(e.target.value);
-                setZoomScale(nextScale);
-                if (nextScale <= 100) setPanPosition({ x: 0, y: 0 }); 
-              }}
-              className="w-16 md:w-24 h-1 bg-zinc-800 appearance-none rounded-lg cursor-pointer accent-indigo-500 focus:outline-none disabled:opacity-20"
-            />
-            <span className="text-[9px] font-mono font-bold text-zinc-400 min-w-[28px] text-right">
-              {zoomScale}%
-            </span>
-          </div>
-
-          <div className="flex items-center gap-0.5">
-            <button className="p-1 rounded-lg text-zinc-500 hover:text-zinc-300 transition" disabled={!videoSrc}>
-              <Volume2 className="w-3.5 h-3.5" />
-            </button>
-            <button className="p-1 rounded-lg text-zinc-500 hover:text-zinc-300 transition" disabled={!videoSrc}>
-              <Maximize2 className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        </div>
-
-      </div>
-
+      )}
     </div>
   );
 }

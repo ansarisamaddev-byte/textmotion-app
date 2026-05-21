@@ -4,6 +4,7 @@ import TranscriptSidebar from './components/TranscriptSidebar';
 import VideoViewport from './components/VideoViewport';
 import TimelineTrack from './components/TimelineTrack';
 import { Layers, Edit3, X, ChevronUp, ChevronDown } from 'lucide-react';
+import RecordRTC from 'recordrtc';
 
 const INITIAL_CAPTIONS = [
   { 
@@ -20,6 +21,73 @@ const INITIAL_CAPTIONS = [
   }
 ];
 
+// 🔥 GLOBAL SINGLE SOURCE OF TRUTH: Shared Canvas Drawing Core
+export const renderCaptionFrame = (ctx, canvas, videoElement, captions, captionStyles) => {
+  if (!videoElement || videoElement.paused || videoElement.ended) return;
+
+  // 1. Draw base layer video frame matrix
+  ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+
+  const timestamp = videoElement.currentTime;
+  const activeCap = captions.find(c => timestamp >= c.start && timestamp <= c.end);
+
+  if (activeCap) {
+    ctx.save();
+    
+    // Parse baseline fonts precisely
+    const baseSize = parseInt(activeCap.fontSize || captionStyles.fontSize) || 48;
+    const fontName = (activeCap.fontFamily || captionStyles.fontFamily).split(',')[0].replace(/['"]/g, '').trim();
+    const isItalic = (activeCap.fontStyle || captionStyles.fontStyle) === 'italic' ? 'italic ' : '';
+    const fontWeight = activeCap.fontWeight || captionStyles.fontWeight || '900';
+    
+    // Explicit system lookup layout execution pass
+    ctx.font = `${isItalic}${fontWeight} ${baseSize}px "${fontName}"`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillStyle = activeCap.color || captionStyles.color || '#fbbf24';
+    
+    // High-impact outline configuration matching premium short forms
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = Math.max(4, baseSize * 0.14);
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+
+    const rawText = (activeCap.textTransform || captionStyles.textTransform) === 'uppercase' 
+      ? activeCap.text.toUpperCase() 
+      : activeCap.text;
+
+    // Word Wrap Helper Engine
+    const words = rawText.split(/\s+/);
+    const lines = [];
+    const maxTextWidth = canvas.width * 0.85; // Secure 85% layout width boundary
+    let currentLine = words[0] || '';
+
+    for (let i = 1; i < words.length; i++) {
+      const testLine = currentLine + ' ' + words[i];
+      if (ctx.measureText(testLine).width > maxTextWidth) {
+        lines.push(currentLine);
+        currentLine = words[i];
+      } else {
+        currentLine = testLine;
+      }
+    }
+    lines.push(currentLine);
+
+    const xPos = canvas.width / 2;
+    let initialYPos = canvas.height * 0.85; // Ground position inside lower third
+    const lineSpacingOffset = baseSize * 1.15;
+
+    // Stack lines cleanly upward
+    for (let j = lines.length - 1; j >= 0; j--) {
+      ctx.strokeText(lines[j], xPos, initialYPos);
+      ctx.fillText(lines[j], xPos, initialYPos);
+      initialYPos -= lineSpacingOffset;
+    }
+
+    ctx.restore();
+  }
+};
+
 export default function App() {
   const [videoSrc, setVideoSrc] = useState(null);
   const [captions, setCaptions] = useState(INITIAL_CAPTIONS);
@@ -29,6 +97,8 @@ export default function App() {
   const [activeId, setActiveId] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [selectedIds, setSelectedIds] = useState([]);
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState(0);
 
   const [sidebarWidth, setSidebarWidth] = useState(220); 
   const [isTimelineOpen, setIsTimelineOpen] = useState(true);
@@ -45,58 +115,25 @@ export default function App() {
   });
 
   const videoRef = useRef(null);
+  const previewCanvasRef = useRef(null);
 
-  // Synchronize dynamic subtitle highlighting
+  // Sync highlighting active subtitle item blocks
   useEffect(() => {
     const matching = captions.find(c => currentTime >= c.start && currentTime <= c.end);
     setActiveId(matching ? matching.id : null);
   }, [currentTime, captions]);
 
-  // Clean up object URLs to prevent browser memory leaks
   useEffect(() => {
     return () => {
-      if (videoSrc && videoSrc.startsWith('blob:')) {
-        URL.revokeObjectURL(videoSrc);
-      }
+      if (videoSrc && videoSrc.startsWith('blob:')) URL.revokeObjectURL(videoSrc);
     };
   }, [videoSrc]);
-
-  // Network ingestion hook
-  useEffect(() => {
-    let isCurrentRequest = true;
-    const fetchTranscribedCaptions = async () => {
-      setIsLoading(true);
-      try {
-        const response = await fetch('https://caption-data-webhook.free.beeceptor.com/v1/captions');
-        const data = await response.json();
-        
-        if (isCurrentRequest && data && data.words) {
-          const formattedData = data.words.map((item, index) => ({
-            id: item.id || `cap_${index}_${Date.now()}`,
-            text: item.word || '',
-            start: parseFloat(item.start ?? 0),
-            end: parseFloat(item.end ?? 0),
-          }));
-          setCaptions(formattedData);
-        }
-      } catch (error) {
-        console.error("Failed fetching processing layers:", error);
-      } finally {
-        if (isCurrentRequest) setIsLoading(false);
-      }
-    };
-
-    fetchTranscribedCaptions();
-    return () => { isCurrentRequest = false; };
-  }, []);
 
   // Video Handlers
   const handleVideoUpload = (e) => {
     const file = e.target.files[0];
     if (file) {
-      if (videoSrc && videoSrc.startsWith('blob:')) {
-        URL.revokeObjectURL(videoSrc);
-      }
+      if (videoSrc && videoSrc.startsWith('blob:')) URL.revokeObjectURL(videoSrc);
       setVideoSrc(URL.createObjectURL(file));
       setIsPlaying(false);
       setCurrentTime(0);
@@ -123,30 +160,13 @@ export default function App() {
   };
 
   const handleUpdateCaption = (id, field, value) => {
-    setCaptions(prev => prev.map(c => {
-      if (c.id === id) {
-        return { 
-          ...c, 
-          [field]: (field === 'start' || field === 'end') ? (parseFloat(value) || 0) : value 
-        };
-      }
-      return c;
-    }));
-  };
-
-  const handleUpdateCaptionsBulk = (id, updatedFields) => {
-    setCaptions(prev => prev.map(c => c.id === id ? { ...c, ...updatedFields } : c));
+    setCaptions(prev => prev.map(c => c.id === id ? { ...c, [field]: value } : c));
   };
 
   const handleAddBlock = () => {
     const last = captions[captions.length - 1];
     const start = last ? parseFloat((last.end + 0.1).toFixed(1)) : 0;
-    setCaptions([...captions, { 
-      id: Date.now().toString(), 
-      start, 
-      end: parseFloat((start + 2.5).toFixed(1)), 
-      text: "New text line..." 
-    }]);
+    setCaptions([...captions, { id: Date.now().toString(), start, end: start + 2.5, text: "New subtitle line..." }]);
   };
 
   const handleDeleteBlock = (id) => {
@@ -157,9 +177,7 @@ export default function App() {
   const handleSeparatorMouseDown = (e) => {
     e.preventDefault();
     const handleMouseMove = (moveEvent) => {
-      const maxAllowedWidth = 300;
-      const newWidth = Math.max(220, Math.min(maxAllowedWidth, moveEvent.clientX));
-      setSidebarWidth(newWidth);
+      setSidebarWidth(Math.max(220, Math.min(300, moveEvent.clientX)));
     };
     const handleMouseUp = () => {
       document.removeEventListener('mousemove', handleMouseMove);
@@ -170,32 +188,19 @@ export default function App() {
   };
 
   const handleSelectCaption = (id, event) => {
-    if (event.metaKey || event.ctrlKey) {
-      setSelectedIds(prev => prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]);
-    } else if (event.shiftKey && selectedIds.length > 0) {
-      const lastSelected = selectedIds[selectedIds.length - 1];
-      const currentIndex = captions.findIndex(c => c.id === id);
-      const lastIndex = captions.findIndex(c => c.id === lastSelected);
-      const start = Math.min(currentIndex, lastIndex);
-      const end = Math.max(currentIndex, lastIndex);
-      const rangeIds = captions.slice(start, end + 1).map(c => c.id);
-      setSelectedIds(prev => Array.from(new Set([...prev, ...rangeIds])));
-    } else {
-      setSelectedIds([id]);
-      setActiveId(id);
-
-      const targetedCaption = captions.find(c => c.id === id);
-      if (targetedCaption) {
-        setCaptionStyles(prev => ({
-          ...prev,
-          fontFamily: targetedCaption.fontFamily || 'Impact, Arial Black, sans-serif',
-          fontSize: targetedCaption.fontSize || '48px',
-          fontWeight: targetedCaption.fontWeight || '900',
-          fontStyle: targetedCaption.fontStyle || 'normal',
-          color: targetedCaption.color || '#fbbf24',
-          textTransform: targetedCaption.textTransform || 'uppercase',
-        }));
-      }
+    setSelectedIds([id]);
+    setActiveId(id);
+    const targeted = captions.find(c => c.id === id);
+    if (targeted) {
+      setCaptionStyles(prev => ({
+        ...prev,
+        fontFamily: targeted.fontFamily || 'Impact, Arial Black, sans-serif',
+        fontSize: targeted.fontSize || '48px',
+        fontWeight: targeted.fontWeight || '900',
+        fontStyle: targeted.fontStyle || 'normal',
+        color: targeted.color || '#fbbf24',
+        textTransform: targeted.textTransform || 'uppercase',
+      }));
     }
   };
 
@@ -209,27 +214,100 @@ export default function App() {
   function setThemePreset(preset) {
     setCaptionStyles(prev => ({
       ...prev,
-      preset: preset.id,
-      fontFamily: preset.font,
-      fontSize: preset.size,
-      fontWeight: preset.weight,
-      color: preset.color,
-      textTransform: preset.trans,
-      fontStyle: preset.style
+      preset: preset.id, fontFamily: preset.font, fontSize: preset.size, fontWeight: preset.weight, color: preset.color, textTransform: preset.trans, fontStyle: preset.style
     }));
-
     if (selectedIds.length > 0) {
-      setCaptions(prev => prev.map(c => selectedIds.includes(c.id) ? {
-        ...c,
-        fontFamily: preset.font,
-        fontSize: preset.size,
-        fontWeight: preset.weight,
-        color: preset.color,
-        textTransform: preset.trans,
-        fontStyle: preset.style
-      } : c));
+      setCaptions(prev => prev.map(c => selectedIds.includes(c.id) ? { ...c, fontFamily: preset.font, fontSize: preset.size, fontWeight: preset.weight, color: preset.color, textTransform: preset.trans, fontStyle: preset.style } : c));
     }
   }
+
+  // 🔥 THE MANDATORY FIXED EXPORT: Executes the exact core frame render code
+  const handleExportVideo = async () => {
+    if (!videoSrc || !videoRef.current) return;
+
+    setIsExporting(true);
+    setExportProgress(0);
+
+    const mainVideo = videoRef.current;
+    const nativeWidth = mainVideo.videoWidth || 1080;
+    const nativeHeight = mainVideo.videoHeight || 1920;
+
+    const originalTime = mainVideo.currentTime;
+    const originalMuted = mainVideo.muted;
+
+    mainVideo.pause();
+    mainVideo.currentTime = 0;
+    mainVideo.muted = true;
+
+    const exportCanvas = document.createElement('canvas');
+    exportCanvas.width = nativeWidth;
+    exportCanvas.height = nativeHeight;
+    const exportCtx = exportCanvas.getContext('2d');
+
+    const stream = exportCanvas.captureStream(30);
+    const recorder = RecordRTC(stream, {
+      type: 'video',
+      mimeType: 'video/webm',
+      bitsPerSecond: 8000000
+    });
+
+    recorder.startRecording();
+    let animId = null;
+
+    const processFrame = () => {
+      if (!mainVideo || mainVideo.paused || mainVideo.ended) return;
+
+      // CALLS THE EXACT SAME LOGIC FUNCTION AS PREVIEW
+      renderCaptionFrame(exportCtx, exportCanvas, mainVideo, captions, captionStyles);
+
+      const progress = Math.min(99, Math.floor((mainVideo.currentTime / duration) * 100));
+      setExportProgress(progress);
+
+      if (mainVideo.currentTime < duration && !mainVideo.ended) {
+        animId = requestAnimationFrame(processFrame);
+      }
+    };
+
+    setTimeout(() => {
+      mainVideo.play().then(() => {
+        animId = requestAnimationFrame(processFrame);
+      }).catch(err => {
+        console.error("Export frame capture engine error:", err);
+        setIsExporting(false);
+      });
+    }, 150);
+
+    const finalizeVideo = () => {
+      if (animId) cancelAnimationFrame(animId);
+      clearInterval(safetyInterval);
+
+      recorder.stopRecording(() => {
+        setExportProgress(100);
+        const blob = recorder.getBlob();
+        const url = URL.createObjectURL(blob);
+
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = `textmotion-render-${Date.now()}.webm`;
+        document.body.appendChild(anchor);
+        anchor.click();
+
+        document.body.removeChild(anchor);
+        URL.revokeObjectURL(url);
+
+        mainVideo.pause();
+        mainVideo.currentTime = originalTime;
+        mainVideo.muted = originalMuted;
+        setIsPlaying(false);
+        setIsExporting(false);
+      });
+    };
+
+    mainVideo.addEventListener('ended', finalizeVideo);
+    const safetyInterval = setInterval(() => {
+      if (mainVideo.currentTime >= duration || mainVideo.ended) finalizeVideo();
+    }, 100);
+  };
 
   const currentActiveCaption = captions.find(c => c.id === activeId);
   const activeViewportStyles = currentActiveCaption ? {
@@ -243,169 +321,67 @@ export default function App() {
 
   return (
     <div className="flex flex-col h-screen bg-zinc-950 text-zinc-100 font-sans select-none overflow-hidden">
-      <WorkspaceHeader onVideoUpload={handleVideoUpload} />
+      {/* Target header trigger link layout bind */}
+      <WorkspaceHeader 
+        onVideoUpload={handleVideoUpload} 
+        onExport={handleExportVideo}
+        isExporting={isExporting}
+        exportProgress={exportProgress}
+        hasVideo={!!videoSrc}
+      />
 
       <div className="flex flex-1 overflow-hidden w-full relative">
         <div style={{ width: `${sidebarWidth}px` }} className="shrink-0 h-full overflow-hidden">
-          <TranscriptSidebar 
-            captions={captions} 
-            activeId={activeId} 
-            selectedIds={selectedIds}
-            onSelectCaption={handleSelectCaption}
-            onUpdate={handleUpdateCaption} 
-            onAdd={handleAddBlock} 
-            onDelete={handleDeleteBlock} 
-          />
+          <TranscriptSidebar captions={captions} activeId={activeId} selectedIds={selectedIds} onSelectCaption={handleSelectCaption} onUpdate={handleUpdateCaption} onAdd={handleAddBlock} onDelete={handleDeleteBlock} />
         </div>
 
-        <div 
-          onMouseDown={handleSeparatorMouseDown}
-          className="w-1.5 h-full bg-zinc-900 hover:bg-indigo-500/80 active:bg-indigo-500 cursor-col-resize transition-colors duration-150 relative z-40 shrink-0"
-        />
+        <div onMouseDown={handleSeparatorMouseDown} className="w-1.5 h-full bg-zinc-900 hover:bg-indigo-500/80 cursor-col-resize shrink-0 z-40" />
 
         <main className="flex-1 flex flex-col bg-zinc-950 overflow-hidden min-w-0">
           <div className="flex-1 grid grid-cols-1 lg:grid-cols-5 p-6 gap-6 min-h-0 relative overflow-hidden">
-            
-            {isLoading && (
-              <div className="absolute inset-0 bg-zinc-950/80 backdrop-blur-sm z-50 flex items-center justify-center rounded-2xl border border-zinc-800">
-                <div className="flex flex-col items-center gap-3">
-                  <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-                  <span className="text-xs font-mono text-zinc-400">Syncing Webhook Sequence Timelines...</span>
-                </div>
-              </div>
-            )}
-
             <div className="lg:col-span-4 min-h-0 flex flex-col relative">
               <VideoViewport 
-                videoSrc={videoSrc}
-                videoRef={videoRef}
-                isPlaying={isPlaying}
-                currentTime={currentTime}
-                duration={duration}
-                activeCaption={currentActiveCaption}
-                captionStyles={activeViewportStyles} 
-                onTogglePlay={handleTogglePlay}
+                videoSrc={videoSrc} videoRef={videoRef} previewCanvasRef={previewCanvasRef} isPlaying={isPlaying} currentTime={currentTime} duration={duration} activeCaption={currentActiveCaption} captions={captions} captionStyles={activeViewportStyles} onTogglePlay={handleTogglePlay}
                 onTimeUpdate={() => setCurrentTime(videoRef.current?.currentTime || 0)}
                 onLoadedMetadata={() => setDuration(videoRef.current?.duration || 0)}
               />
             </div>
 
-            <div className="lg:col-span-1 bg-zinc-900/30 border border-zinc-800/60 rounded-2xl p-4 flex flex-col gap-4 h-full overflow-y-auto min-w-0">
-              <div className="flex items-center justify-between border-b border-zinc-800 pb-2 shrink-0 gap-2">
-                <div className="flex items-center gap-2 min-w-0">
-                  <Layers className="w-4 h-4 text-indigo-400 shrink-0" />
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 truncate">Caption Presets</h3>
-                </div>
-                
-                <button
-                  onClick={() => setCaptionStyles(prev => ({ ...prev, isEditingCustom: !prev.isEditingCustom }))}
-                  className={`w-8 h-8 rounded-lg border transition-all duration-150 flex items-center justify-center shrink-0 min-w-[32px] ${
-                    captionStyles.isEditingCustom ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-zinc-900 border-zinc-800 text-zinc-400'
-                  }`}
-                >
-                  {captionStyles.isEditingCustom ? <X className="w-3.5 h-3.5" /> : <Edit3 className="w-3.5 h-3.5" />}
+            {/* Config Panel Right column */}
+            <div className="lg:col-span-1 bg-zinc-900/30 border border-zinc-800/60 rounded-2xl p-4 flex flex-col gap-4 h-full overflow-y-auto">
+              <div className="flex items-center justify-between border-b border-zinc-800 pb-2 shrink-0">
+                <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Style Deck Presets</span>
+                <button onClick={() => setCaptionStyles(prev => ({ ...prev, isEditingCustom: !prev.isEditingCustom }))} className="p-1 rounded bg-zinc-900 text-zinc-400">
+                  {captionStyles.isEditingCustom ? <X className="w-4 h-4" /> : <Edit3 className="w-4 h-4" />}
                 </button>
               </div>
 
               {captionStyles.isEditingCustom ? (
-                <div className="space-y-3 text-zinc-300 select-none">
+                <div className="space-y-3 text-xs">
                   <div className="flex flex-col gap-1">
-                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wide">Font Family</label>
-                    <select
-                      value={captionStyles.fontFamily}
-                      onChange={(e) => handleCustomStyleChange('fontFamily', e.target.value)}
-                      className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2 text-xs text-zinc-200 focus:outline-none"
-                    >
+                    <label className="text-zinc-500 font-bold uppercase">Font Family</label>
+                    <select value={captionStyles.fontFamily} onChange={(e) => handleCustomStyleChange('fontFamily', e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded p-1.5 text-zinc-200">
                       <option value="Impact, Arial Black, sans-serif">KINETIC (Impact)</option>
-                      <option value="'Courier New', Courier, monospace">SYSTEM COURIER</option>
                       <option value="system-ui, sans-serif">MINIMAL SANS</option>
-                      <option value="'Georgia', serif">EDITORIAL SERIF</option>
+                      <option value="'Courier New', Courier, monospace">SYSTEM COURIER</option>
                     </select>
-                  </div>
-
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wide">Size</label>
-                    <select
-                      value={captionStyles.fontSize}
-                      onChange={(e) => handleCustomStyleChange('fontSize', e.target.value)}
-                      className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2 text-xs text-zinc-200 focus:outline-none"
-                    >
-                      <option value="12px">12px</option>
-                      <option value="24px">24px</option>
-                      <option value="36px">36px</option>
-                      <option value="48px">48px</option>
-                      <option value="64px">64px</option>
-                    </select>
-                  </div>
-
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wide">Styles</label>
-                    <div className="grid grid-cols-3 gap-1">
-                      <button onClick={() => handleCustomStyleChange('fontWeight', captionStyles.fontWeight === '700' ? '400' : '700')} className={`py-2 rounded-lg border text-xs font-bold ${captionStyles.fontWeight === '700' ? 'bg-zinc-800 text-white' : 'bg-zinc-950/40 text-zinc-500'}`}>B</button>
-                      <button onClick={() => handleCustomStyleChange('fontStyle', captionStyles.fontStyle === 'italic' ? 'normal' : 'italic')} className={`py-2 rounded-lg border text-xs italic ${captionStyles.fontStyle === 'italic' ? 'bg-zinc-800 text-white' : 'bg-zinc-950/40 text-zinc-500'}`}>I</button>
-                      <button onClick={() => handleCustomStyleChange('textTransform', captionStyles.textTransform === 'uppercase' ? 'none' : 'uppercase')} className={`py-2 rounded-lg border text-xs font-mono ${captionStyles.textTransform === 'uppercase' ? 'bg-zinc-800 text-white' : 'bg-zinc-950/40 text-zinc-500'}`}>TT</button>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wide">Color Accent</label>
-                    <div className="flex gap-2 bg-zinc-950 p-2 rounded-xl border border-zinc-800/80">
-                      {[{ label: 'Yellow', hex: '#fbbf24' }, { label: 'White', hex: '#ffffff' }, { label: 'Cyan', hex: '#22d3ee' }, { label: 'Red', hex: '#f87171' }].map(colorOpt => (
-                        <button
-                          key={colorOpt.hex}
-                          onClick={() => handleCustomStyleChange('color', colorOpt.hex)}
-                          className="w-6 h-6 rounded-full border border-zinc-800 relative"
-                          style={{ backgroundColor: colorOpt.hex }}
-                        >
-                          {captionStyles.color === colorOpt.hex && <div className="absolute inset-0 m-auto w-1.5 h-1.5 bg-zinc-950 rounded-full" />}
-                        </button>
-                      ))}
-                    </div>
                   </div>
                 </div>
               ) : (
-                <div className="space-y-3">
+                <div className="space-y-2">
                   {[
                     { id: 'bold-yellow', label: '🔥 Bold Kinetic (Yellow)', font: 'Impact, Arial Black, sans-serif', size: '48px', weight: '900', color: '#fbbf24', trans: 'uppercase', style: 'normal' },
-                    { id: 'minimal-white', label: '📝 Minimal Lower Third', font: 'system-ui, sans-serif', size: '24px', weight: '500', color: '#ffffff', trans: 'none', style: 'normal' },
-                    { id: 'cyber-neon', label: '⚡ Cyberpunk Glow', font: "'Courier New', Courier, monospace", size: '32px', weight: '700', color: '#22d3ee', trans: 'uppercase', style: 'italic' }
-                  ].map(preset => (
-                    <button
-                      key={preset.id}
-                      onClick={() => setThemePreset(preset)}
-                      className={`w-full text-left p-3.5 rounded-xl border text-xs transition-all ${
-                        captionStyles.preset === preset.id ? 'bg-indigo-600/10 border-indigo-500 text-white' : 'bg-zinc-900/40 border-zinc-800/80 text-zinc-400'
-                      }`}
-                    >
-                      {preset.label}
-                    </button>
+                    { id: 'minimal-white', label: '📝 Minimal Lower Third', font: 'system-ui, sans-serif', size: '24px', weight: '500', color: '#ffffff', trans: 'none', style: 'normal' }
+                  ].map(p => (
+                    <button key={p.id} onClick={() => setThemePreset(p)} className={`w-full text-left p-3 rounded-xl border text-xs ${captionStyles.preset === p.id ? 'bg-indigo-600/10 border-indigo-500 text-white' : 'bg-zinc-900/40 border-zinc-800 text-zinc-400'}`}>{p.label}</button>
                   ))}
                 </div>
               )}
             </div>
           </div>
 
-          <button onClick={() => setIsTimelineOpen(!isTimelineOpen)} className="h-3 w-full bg-zinc-900 border-t border-zinc-800 hover:bg-zinc-800/60 flex items-center justify-center transition-all group shrink-0">
-            <div className="text-zinc-500 group-hover:text-zinc-300">
-              {isTimelineOpen ? <ChevronDown className="w-2 h-2" /> : <ChevronUp className="w-2 h-2" />}
-            </div>
-          </button>
-
-          <div 
-            style={{ height: isTimelineOpen ? '220px' : '0px' }} 
-            className="shrink-0 w-full bg-zinc-900 overflow-hidden transition-[height] duration-300 ease-in-out"
-          >
-            {/* 🔥 REFACTORED INSTANTIATION:
-              Passing string videoSrc variable to keep timeline rendering perfectly sandboxed!
-            */}
-            <TimelineTrack 
-              videoSrc={videoSrc} 
-              captions={captions} 
-              currentTime={currentTime} 
-              duration={duration} 
-              activeId={activeId}
-              onSeek={handleTimelineSeek}
-            />
+          <div style={{ height: isTimelineOpen ? '220px' : '0px' }} className="shrink-0 w-full bg-zinc-900 overflow-hidden transition-[height] duration-200">
+            <TimelineTrack videoSrc={videoSrc} captions={captions} currentTime={currentTime} duration={duration} activeId={activeId} onSeek={handleTimelineSeek} />
           </div>
         </main>
       </div>
