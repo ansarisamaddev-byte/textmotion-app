@@ -40,8 +40,7 @@ export default function VideoViewport({
 
   // --- Pan Execution Flow (Drag and Drop Frame Logic) ---
   const handleMouseDown = (e) => {
-    // Only allow dragging if zoomed in past baseline limits
-    if (zoomScale <= 100) return;
+    if (zoomScale <= 100 || !videoSrc) return;
     setIsDragging(true);
     dragStart.current = { x: e.clientX - panPosition.x, y: e.clientY - panPosition.y };
   };
@@ -58,13 +57,11 @@ export default function VideoViewport({
     setIsDragging(false);
   };
 
-  // Reset viewport orientation matrix
   const handleResetView = () => {
     setZoomScale(100);
     setPanPosition({ x: 0, y: 0 });
   };
 
-  // Clean mouseup event handlers globally if mouse leaves bounding window frame
   useEffect(() => {
     if (isDragging) {
       window.addEventListener('mouseup', handleMouseUp);
@@ -81,40 +78,44 @@ export default function VideoViewport({
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         className={`relative flex-1 flex items-center justify-center min-h-0 w-full rounded-xl bg-zinc-950 border border-zinc-900/60 overflow-hidden group shadow-inner ${
-          zoomScale > 100 ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
+          zoomScale > 100 && videoSrc ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
         }`}
       >
-        
-        {videoSrc ? (
-          /* Production Scale Translation Transform Viewport Container */
-          <div 
-            style={{ 
-              transform: `translate(${panPosition.x}px, ${panPosition.y}px) scale(${zoomScale / 100})`,
-              transformOrigin: 'center center'
-            }}
-            className="relative max-h-full max-w-full w-full h-full flex items-center justify-center transition-transform duration-75 ease-out pointer-events-none"
-          >
-            <video
-              ref={videoRef}
-              src={videoSrc}
-              onTimeUpdate={onTimeUpdate}
-              onLoadedMetadata={onLoadedMetadata}
-              onClick={(e) => {
-                // Prevent single play click from triggering canvas changes
-                if (zoomScale <= 100) onTogglePlay();
-              }}
-              className="max-h-full max-w-full object-contain pointer-events-auto"
-            />
-          </div>
-        ) : (
-          <div className="flex flex-col items-center gap-2 text-zinc-500 font-mono text-xs">
-            <span className="p-2.5 bg-zinc-900 rounded-xl border border-zinc-800">🎬</span>
+        {/* Placeholder Screen: Rendered when no src exists */}
+        {!videoSrc && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-zinc-500 font-mono text-xs z-10 bg-zinc-950">
+            <span className="p-2.5 bg-zinc-900 rounded-xl border border-zinc-800 text-base">🎬</span>
             <span>No active workspace sequence media loaded...</span>
           </div>
         )}
 
+        {/* CRITICAL REFACTOR: Video tag is kept permanently mounted in the tree. 
+          This forces React refs and event bubbles to wire immediately upon boot.
+        */}
+        <div 
+          style={{ 
+            transform: `translate(${panPosition.x}px, ${panPosition.y}px) scale(${zoomScale / 100})`,
+            transformOrigin: 'center center',
+            display: videoSrc ? 'flex' : 'none' // Controlled via display property instead of structure destruction
+          }}
+          className="relative max-h-full max-w-full w-full h-full items-center justify-center transition-transform duration-75 ease-out pointer-events-none"
+        >
+          <video
+            ref={videoRef}
+            src={videoSrc || undefined}
+            onTimeUpdate={onTimeUpdate}
+            onLoadedMetadata={onLoadedMetadata}
+            onClick={(e) => {
+              if (zoomScale <= 100) onTogglePlay();
+            }}
+            className="max-h-full max-w-full object-contain pointer-events-auto"
+            playsInline
+            muted
+          />
+        </div>
+
         {/* Floating Reset View Indicator Alert */}
-        {zoomScale > 100 && (
+        {zoomScale > 100 && videoSrc && (
           <button 
             onClick={handleResetView}
             className="absolute top-3 right-3 z-30 bg-zinc-900/80 hover:bg-zinc-800 text-[10px] text-zinc-400 hover:text-white font-mono px-2 py-1 rounded border border-zinc-800 transition backdrop-blur"
@@ -123,8 +124,8 @@ export default function VideoViewport({
           </button>
         )}
 
-        {/* 2. Captions Render Sub-Layer (Kept isolated from Panning translation shifts so subtitles stay perfectly locked on screen) */}
-        {activeCaption && (
+        {/* 2. Captions Render Sub-Layer */}
+        {activeCaption && videoSrc && (
           <div 
             className="absolute bottom-6 left-1/2 -translate-x-1/2 text-center pointer-events-none select-none px-6 w-full max-w-[85%] z-20"
             style={{
@@ -160,12 +161,13 @@ export default function VideoViewport({
           </div>
         </div>
 
-        {/* System Action buttons loop */}
+        {/* Controls Layout Toolbar */}
         <div className="flex items-center justify-between w-full gap-4">
           <div className="flex items-center gap-3">
             <button
               onClick={onTogglePlay}
-              className={`p-1.5 rounded-lg border text-zinc-300 transition-all active:scale-90 ${
+              disabled={!videoSrc}
+              className={`p-1.5 rounded-lg border text-zinc-300 transition-all active:scale-90 disabled:opacity-20 disabled:pointer-events-none ${
                 isPlaying 
                   ? 'bg-zinc-800 border-zinc-700 text-white shadow-md' 
                   : 'bg-zinc-950 border-zinc-800 hover:text-white hover:border-zinc-700'
@@ -186,15 +188,16 @@ export default function VideoViewport({
             {zoomScale > 100 ? <Move className="w-3 h-3 text-indigo-400" /> : <ZoomIn className="w-3 h-3 text-zinc-500" />}
             <input 
               type="range"
-              min="100" // Clamped at 100% minimum so users don't break aspect ratio scales negatively
-              max="400" // Max out at 400% zoom depth tracking 
+              min="100" 
+              max="400" 
+              disabled={!videoSrc}
               value={zoomScale}
               onChange={(e) => {
                 const nextScale = Number(e.target.value);
                 setZoomScale(nextScale);
-                if (nextScale <= 100) setPanPosition({ x: 0, y: 0 }); // Clean pan offset matrix if restored to normal sizing bounds
+                if (nextScale <= 100) setPanPosition({ x: 0, y: 0 }); 
               }}
-              className="w-16 md:w-24 h-1 bg-zinc-800 appearance-none rounded-lg cursor-pointer accent-indigo-500 focus:outline-none"
+              className="w-16 md:w-24 h-1 bg-zinc-800 appearance-none rounded-lg cursor-pointer accent-indigo-500 focus:outline-none disabled:opacity-20"
             />
             <span className="text-[9px] font-mono font-bold text-zinc-400 min-w-[28px] text-right">
               {zoomScale}%
@@ -202,10 +205,10 @@ export default function VideoViewport({
           </div>
 
           <div className="flex items-center gap-0.5">
-            <button className="p-1 rounded-lg text-zinc-500 hover:text-zinc-300 transition">
+            <button className="p-1 rounded-lg text-zinc-500 hover:text-zinc-300 transition" disabled={!videoSrc}>
               <Volume2 className="w-3.5 h-3.5" />
             </button>
-            <button className="p-1 rounded-lg text-zinc-500 hover:text-zinc-300 transition">
+            <button className="p-1 rounded-lg text-zinc-500 hover:text-zinc-300 transition" disabled={!videoSrc}>
               <Maximize2 className="w-3.5 h-3.5" />
             </button>
           </div>

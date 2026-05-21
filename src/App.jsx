@@ -21,7 +21,6 @@ const INITIAL_CAPTIONS = [
 ];
 
 export default function App() {
-  // Video and Data Layer States
   const [videoSrc, setVideoSrc] = useState(null);
   const [captions, setCaptions] = useState(INITIAL_CAPTIONS);
   const [currentTime, setCurrentTime] = useState(0);
@@ -31,11 +30,9 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [selectedIds, setSelectedIds] = useState([]);
 
-  // Layout Sizing States
   const [sidebarWidth, setSidebarWidth] = useState(220); 
   const [isTimelineOpen, setIsTimelineOpen] = useState(true);
 
-  // Combined Advanced Typography State Object
   const [captionStyles, setCaptionStyles] = useState({
     preset: 'bold-yellow',
     fontFamily: 'Impact, Arial Black, sans-serif',
@@ -49,7 +46,7 @@ export default function App() {
 
   const videoRef = useRef(null);
 
-  // Synchronize dynamic subtitle highlighting based on timestamps
+  // Synchronize dynamic subtitle highlighting
   useEffect(() => {
     const matching = captions.find(c => currentTime >= c.start && currentTime <= c.end);
     setActiveId(matching ? matching.id : null);
@@ -64,10 +61,9 @@ export default function App() {
     };
   }, [videoSrc]);
 
-  // Integrated Network Loop to ingest live segments from Beeceptor
+  // Network ingestion hook
   useEffect(() => {
     let isCurrentRequest = true;
-
     const fetchTranscribedCaptions = async () => {
       setIsLoading(true);
       try {
@@ -86,26 +82,25 @@ export default function App() {
       } catch (error) {
         console.error("Failed fetching processing layers:", error);
       } finally {
-        if (isCurrentRequest) {
-          setIsLoading(false);
-        }
+        if (isCurrentRequest) setIsLoading(false);
       }
     };
 
     fetchTranscribedCaptions();
-
-    return () => {
-      isCurrentRequest = false;
-    };
+    return () => { isCurrentRequest = false; };
   }, []);
 
-  // Video Actions
+  // Video Handlers
   const handleVideoUpload = (e) => {
     const file = e.target.files[0];
     if (file) {
+      if (videoSrc && videoSrc.startsWith('blob:')) {
+        URL.revokeObjectURL(videoSrc);
+      }
       setVideoSrc(URL.createObjectURL(file));
       setIsPlaying(false);
       setCurrentTime(0);
+      setDuration(0);
     }
   };
 
@@ -127,7 +122,6 @@ export default function App() {
     }
   };
 
-  // Caption Data Actions
   const handleUpdateCaption = (id, field, value) => {
     setCaptions(prev => prev.map(c => {
       if (c.id === id) {
@@ -160,7 +154,6 @@ export default function App() {
     setSelectedIds(prev => prev.filter(item => item !== id));
   };
 
-  // Draggable Left Sidebar Splitting Handler
   const handleSeparatorMouseDown = (e) => {
     e.preventDefault();
     const handleMouseMove = (moveEvent) => {
@@ -178,10 +171,7 @@ export default function App() {
 
   const handleSelectCaption = (id, event) => {
     if (event.metaKey || event.ctrlKey) {
-      setSelectedIds(prev => {
-        const isAlreadySelected = prev.includes(id);
-        return isAlreadySelected ? prev.filter(item => item !== id) : [...prev, id];
-      });
+      setSelectedIds(prev => prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]);
     } else if (event.shiftKey && selectedIds.length > 0) {
       const lastSelected = selectedIds[selectedIds.length - 1];
       const currentIndex = captions.findIndex(c => c.id === id);
@@ -211,11 +201,8 @@ export default function App() {
 
   const handleCustomStyleChange = (field, value) => {
     setCaptionStyles(prev => ({ ...prev, preset: 'custom', [field]: value }));
-    
     if (selectedIds.length > 0) {
-      setCaptions(prev => prev.map(c => 
-        selectedIds.includes(c.id) ? { ...c, [field]: value } : c
-      ));
+      setCaptions(prev => prev.map(c => selectedIds.includes(c.id) ? { ...c, [field]: value } : c));
     }
   };
 
@@ -232,27 +219,19 @@ export default function App() {
     }));
 
     if (selectedIds.length > 0) {
-      setCaptions(prev => prev.map(c => {
-        if (selectedIds.includes(c.id)) {
-          return {
-            ...c,
-            fontFamily: preset.font,
-            fontSize: preset.size,
-            fontWeight: preset.weight,
-            color: preset.color,
-            textTransform: preset.trans,
-            fontStyle: preset.style
-          };
-        }
-        return c;
-      }));
+      setCaptions(prev => prev.map(c => selectedIds.includes(c.id) ? {
+        ...c,
+        fontFamily: preset.font,
+        fontSize: preset.size,
+        fontWeight: preset.weight,
+        color: preset.color,
+        textTransform: preset.trans,
+        fontStyle: preset.style
+      } : c));
     }
   }
 
-  // Find the current active playback caption slice
   const currentActiveCaption = captions.find(c => c.id === activeId);
-
-  // Secure styling merge down to the active viewport canvas frame
   const activeViewportStyles = currentActiveCaption ? {
     fontFamily: currentActiveCaption.fontFamily || captionStyles.fontFamily,
     fontSize: currentActiveCaption.fontSize || captionStyles.fontSize,
@@ -267,8 +246,6 @@ export default function App() {
       <WorkspaceHeader onVideoUpload={handleVideoUpload} />
 
       <div className="flex flex-1 overflow-hidden w-full relative">
-        
-        {/* Left Sidebar Layout */}
         <div style={{ width: `${sidebarWidth}px` }} className="shrink-0 h-full overflow-hidden">
           <TranscriptSidebar 
             captions={captions} 
@@ -281,19 +258,14 @@ export default function App() {
           />
         </div>
 
-        {/* Vertical Width Separator Handle Bar */}
         <div 
           onMouseDown={handleSeparatorMouseDown}
-          className="w-1.5 h-full bg-zinc-900 hover:bg-indigo-500/80 active:bg-indigo-500 cursor-col-resize transition-colors duration-150 relative z-40 shrink-0 after:content-[''] after:absolute after:inset-y-0 after:-left-1 after:-right-1"
+          className="w-1.5 h-full bg-zinc-900 hover:bg-indigo-500/80 active:bg-indigo-500 cursor-col-resize transition-colors duration-150 relative z-40 shrink-0"
         />
 
-        {/* Center Canvas + Bottom Timeline Panel Stack Area */}
         <main className="flex-1 flex flex-col bg-zinc-950 overflow-hidden min-w-0">
-          
-          {/* Main Top Content Area — MODIFIED layout split weights to grid-cols-5 */}
           <div className="flex-1 grid grid-cols-1 lg:grid-cols-5 p-6 gap-6 min-h-0 relative overflow-hidden">
             
-            {/* Loading Indicator */}
             {isLoading && (
               <div className="absolute inset-0 bg-zinc-950/80 backdrop-blur-sm z-50 flex items-center justify-center rounded-2xl border border-zinc-800">
                 <div className="flex flex-col items-center gap-3">
@@ -303,7 +275,6 @@ export default function App() {
               </div>
             )}
 
-            {/* Video Viewport Column — Expanded from col-span-3 to col-span-4 */}
             <div className="lg:col-span-4 min-h-0 flex flex-col relative">
               <VideoViewport 
                 videoSrc={videoSrc}
@@ -319,43 +290,31 @@ export default function App() {
               />
             </div>
 
-            {/* Right Panel Subtitle Preset Controls — Set to col-span-1 for premium spacing layout */}
             <div className="lg:col-span-1 bg-zinc-900/30 border border-zinc-800/60 rounded-2xl p-4 flex flex-col gap-4 h-full overflow-y-auto min-w-0">
-              
-              {/* Preset Panel Header Area */}
-              <div className="flex items-center justify-between border-b border-zinc-800 pb-2 shrink-0 flex-nowrap gap-2">
+              <div className="flex items-center justify-between border-b border-zinc-800 pb-2 shrink-0 gap-2">
                 <div className="flex items-center gap-2 min-w-0">
                   <Layers className="w-4 h-4 text-indigo-400 shrink-0" />
                   <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 truncate">Caption Presets</h3>
                 </div>
                 
                 <button
-                  onClick={() => setCaptionStyles(prev => ({ 
-                    ...prev, 
-                    isEditingCustom: !prev.isEditingCustom 
-                  }))}
+                  onClick={() => setCaptionStyles(prev => ({ ...prev, isEditingCustom: !prev.isEditingCustom }))}
                   className={`w-8 h-8 rounded-lg border transition-all duration-150 flex items-center justify-center shrink-0 min-w-[32px] ${
-                    captionStyles.isEditingCustom 
-                      ? 'bg-indigo-600 border-indigo-500 text-white shadow-md' 
-                      : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-700'
+                    captionStyles.isEditingCustom ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-zinc-900 border-zinc-800 text-zinc-400'
                   }`}
-                  title={captionStyles.isEditingCustom ? "Close Custom Controls" : "Open Custom Controls"}
                 >
                   {captionStyles.isEditingCustom ? <X className="w-3.5 h-3.5" /> : <Edit3 className="w-3.5 h-3.5" />}
                 </button>
               </div>
 
-              {/* Dynamic View Selector */}
               {captionStyles.isEditingCustom ? (
-                /* VIEW 1: Custom Font Suite Panel */
-                <div className="space-y-3 text-zinc-300 select-none animate-fadeIn">
-                  
+                <div className="space-y-3 text-zinc-300 select-none">
                   <div className="flex flex-col gap-1">
                     <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wide">Font Family</label>
                     <select
                       value={captionStyles.fontFamily}
                       onChange={(e) => handleCustomStyleChange('fontFamily', e.target.value)}
-                      className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2 pr-8 text-xs text-zinc-200 focus:outline-none focus:border-indigo-500"
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2 text-xs text-zinc-200 focus:outline-none"
                     >
                       <option value="Impact, Arial Black, sans-serif">KINETIC (Impact)</option>
                       <option value="'Courier New', Courier, monospace">SYSTEM COURIER</option>
@@ -369,7 +328,7 @@ export default function App() {
                     <select
                       value={captionStyles.fontSize}
                       onChange={(e) => handleCustomStyleChange('fontSize', e.target.value)}
-                      className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2 pr-8 text-xs text-zinc-200 focus:outline-none"
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2 text-xs text-zinc-200 focus:outline-none"
                     >
                       <option value="12px">12px</option>
                       <option value="24px">24px</option>
@@ -382,53 +341,29 @@ export default function App() {
                   <div className="flex flex-col gap-1">
                     <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wide">Styles</label>
                     <div className="grid grid-cols-3 gap-1">
-                      <button
-                        onClick={() => handleCustomStyleChange('fontWeight', captionStyles.fontWeight === '700' ? '400' : '700')}
-                        className={`py-2 rounded-lg border text-xs font-bold transition-all ${captionStyles.fontWeight === '700' ? 'bg-zinc-800 border-zinc-600 text-white' : 'bg-zinc-950/40 border-zinc-800 text-zinc-500'}`}
-                      >
-                        B
-                      </button>
-                      <button
-                        onClick={() => handleCustomStyleChange('fontStyle', captionStyles.fontStyle === 'italic' ? 'normal' : 'italic')}
-                        className={`py-2 rounded-lg border text-xs italic font-serif transition-all ${captionStyles.fontStyle === 'italic' ? 'bg-zinc-800 border-zinc-600 text-white' : 'bg-zinc-950/40 border-zinc-800 text-zinc-500'}`}
-                      >
-                        I
-                      </button>
-                      <button
-                        onClick={() => handleCustomStyleChange('textTransform', captionStyles.textTransform === 'uppercase' ? 'none' : 'uppercase')}
-                        className={`py-2 rounded-lg border text-xs font-mono transition-all ${captionStyles.textTransform === 'uppercase' ? 'bg-zinc-800 border-zinc-600 text-white' : 'bg-zinc-950/40 border-zinc-800 text-zinc-500'}`}
-                      >
-                        TT
-                      </button>
+                      <button onClick={() => handleCustomStyleChange('fontWeight', captionStyles.fontWeight === '700' ? '400' : '700')} className={`py-2 rounded-lg border text-xs font-bold ${captionStyles.fontWeight === '700' ? 'bg-zinc-800 text-white' : 'bg-zinc-950/40 text-zinc-500'}`}>B</button>
+                      <button onClick={() => handleCustomStyleChange('fontStyle', captionStyles.fontStyle === 'italic' ? 'normal' : 'italic')} className={`py-2 rounded-lg border text-xs italic ${captionStyles.fontStyle === 'italic' ? 'bg-zinc-800 text-white' : 'bg-zinc-950/40 text-zinc-500'}`}>I</button>
+                      <button onClick={() => handleCustomStyleChange('textTransform', captionStyles.textTransform === 'uppercase' ? 'none' : 'uppercase')} className={`py-2 rounded-lg border text-xs font-mono ${captionStyles.textTransform === 'uppercase' ? 'bg-zinc-800 text-white' : 'bg-zinc-950/40 text-zinc-500'}`}>TT</button>
                     </div>
                   </div>
 
                   <div className="flex flex-col gap-1">
                     <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wide">Color Accent</label>
                     <div className="flex gap-2 bg-zinc-950 p-2 rounded-xl border border-zinc-800/80">
-                      {[
-                        { label: 'Yellow', hex: '#fbbf24' },
-                        { label: 'White', hex: '#ffffff' },
-                        { label: 'Cyan', hex: '#22d3ee' },
-                        { label: 'Red', hex: '#f87171' }
-                      ].map(colorOpt => (
+                      {[{ label: 'Yellow', hex: '#fbbf24' }, { label: 'White', hex: '#ffffff' }, { label: 'Cyan', hex: '#22d3ee' }, { label: 'Red', hex: '#f87171' }].map(colorOpt => (
                         <button
                           key={colorOpt.hex}
                           onClick={() => handleCustomStyleChange('color', colorOpt.hex)}
-                          className="w-6 h-6 rounded-full border border-zinc-800 transition-transform active:scale-90 relative shrink-0"
+                          className="w-6 h-6 rounded-full border border-zinc-800 relative"
                           style={{ backgroundColor: colorOpt.hex }}
                         >
-                          {captionStyles.color === colorOpt.hex && (
-                            <div className="absolute inset-0 m-auto w-1.5 h-1.5 bg-zinc-950 rounded-full" />
-                          )}
+                          {captionStyles.color === colorOpt.hex && <div className="absolute inset-0 m-auto w-1.5 h-1.5 bg-zinc-950 rounded-full" />}
                         </button>
                       ))}
                     </div>
                   </div>
-
                 </div>
               ) : (
-                /* VIEW 2: Default Presets List View */
                 <div className="space-y-3">
                   {[
                     { id: 'bold-yellow', label: '🔥 Bold Kinetic (Yellow)', font: 'Impact, Arial Black, sans-serif', size: '48px', weight: '900', color: '#fbbf24', trans: 'uppercase', style: 'normal' },
@@ -438,10 +373,8 @@ export default function App() {
                     <button
                       key={preset.id}
                       onClick={() => setThemePreset(preset)}
-                      className={`w-full text-left p-3.5 rounded-xl border text-xs transition-all duration-200 ${
-                        captionStyles.preset === preset.id 
-                          ? 'bg-indigo-600/10 border-indigo-500 text-white shadow-md' 
-                          : 'bg-zinc-900/40 border-zinc-800/80 hover:bg-zinc-800/50 text-zinc-400'
+                      className={`w-full text-left p-3.5 rounded-xl border text-xs transition-all ${
+                        captionStyles.preset === preset.id ? 'bg-indigo-600/10 border-indigo-500 text-white' : 'bg-zinc-900/40 border-zinc-800/80 text-zinc-400'
                       }`}
                     >
                       {preset.label}
@@ -452,29 +385,26 @@ export default function App() {
             </div>
           </div>
 
-          {/* CLICKABLE TOGGLE SLIDE BAR KEY TRIGGER */}
-          <button 
-            onClick={() => setIsTimelineOpen(!isTimelineOpen)}
-            className="h-3 w-full bg-zinc-900 border-t border-zinc-800 hover:bg-zinc-800/60 flex items-center justify-center transition-all group shrink-0"
-          >
-            <div className="flex items-center gap-2 text-zinc-500 group-hover:text-zinc-300">
+          <button onClick={() => setIsTimelineOpen(!isTimelineOpen)} className="h-3 w-full bg-zinc-900 border-t border-zinc-800 hover:bg-zinc-800/60 flex items-center justify-center transition-all group shrink-0">
+            <div className="text-zinc-500 group-hover:text-zinc-300">
               {isTimelineOpen ? <ChevronDown className="w-2 h-2" /> : <ChevronUp className="w-2 h-2" />}
             </div>
           </button>
 
-          {/* SMOOTH ANIMATED SLIDING TIMELINE PANEL CONTAINER */}
           <div 
             style={{ height: isTimelineOpen ? '220px' : '0px' }} 
             className="shrink-0 w-full bg-zinc-900 overflow-hidden transition-[height] duration-300 ease-in-out"
           >
+            {/* 🔥 REFACTORED INSTANTIATION:
+              Passing string videoSrc variable to keep timeline rendering perfectly sandboxed!
+            */}
             <TimelineTrack 
-              videoSrc={videoRef}
+              videoSrc={videoSrc} 
               captions={captions} 
               currentTime={currentTime} 
               duration={duration} 
               activeId={activeId}
               onSeek={handleTimelineSeek}
-              onUpdateCaptions={handleUpdateCaptionsBulk}
             />
           </div>
         </main>
