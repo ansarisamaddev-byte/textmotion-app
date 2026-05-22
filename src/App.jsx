@@ -424,10 +424,49 @@ export default function App() {
     }
   };
 
-  const handleTimelineSeek = (time) => {
+const handleTimelineSeek = (time) => {
     if (videoRef.current) {
       videoRef.current.currentTime = time;
-      setCurrentTime(time);
+      
+      // Update our high-performance reference pointer immediately
+      currentTimeRef.current = time;
+
+      // Find the caption enclosing the clicked timeline timestamp
+      const targetedCaption = captions.find(c => time >= c.start && time <= c.end);
+
+      if (targetedCaption) {
+        // Set it as the active and selected caption in your configuration block
+        setActiveId(targetedCaption.id);
+        setSelectedIds([targetedCaption.id]);
+
+        // Sync custom editing panel inputs with this caption's typography parameters
+        setCaptionStyles(prev => ({
+          ...prev,
+          fontFamily: targetedCaption.fontFamily || 'Impact, Arial Black, sans-serif',
+          fontSize: targetedCaption.fontSize || '48px',
+          fontWeight: targetedCaption.fontWeight || '900',
+          fontStyle: targetedCaption.fontStyle || 'normal',
+          color: targetedCaption.color || '#fbbf24',
+          textTransform: targetedCaption.textTransform || 'uppercase',
+          strokeColor: targetedCaption.strokeColor || '#000000',
+          strokeWidth: targetedCaption.strokeWidth !== undefined ? targetedCaption.strokeWidth : 0.14,
+          shadow: targetedCaption.shadow !== undefined ? targetedCaption.shadow : true,
+          underline: targetedCaption.underline !== undefined ? targetedCaption.underline : false,
+          strike: targetedCaption.strike !== undefined ? targetedCaption.strike : false,
+        }));
+      } else {
+        // Clear active selection if the user clicks an empty gap on the timeline track
+        setActiveId(null);
+        setSelectedIds([]);
+      }
+
+      // Force an immediate canvas layout redraw to instantly display the updated block
+      const canvas = previewCanvasRef.current;
+      if (canvas) {
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        renderCaptionFrame(ctx, canvas, videoRef.current, captions, captionStyles);
+      }
     }
   };
 
