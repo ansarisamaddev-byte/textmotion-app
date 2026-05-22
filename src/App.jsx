@@ -123,10 +123,36 @@ export default function App() {
   const previewCanvasRef = useRef(null);
 
   // Sync highlighting active subtitle item blocks
-  useEffect(() => {
-    const matching = captions.find(c => currentTime >= c.start && currentTime <= c.end);
-    setActiveId(matching ? matching.id : null);
-  }, [currentTime, captions]);
+// Inside App.jsx
+useEffect(() => {
+  // If no media is loaded, reset tracking states completely
+  if (!videoSrc) {
+    setActiveId(null);
+    return;
+  }
+
+  // 1. 🔥 THE CONDITION: Only auto-update the active ID via time if the video is actually PLAYING
+  if (isPlaying) {
+    const currentActiveBlock = captions.find(
+      (c) => currentTime >= c.start && currentTime <= c.end
+    );
+
+    if (currentActiveBlock) {
+      setActiveId(currentActiveBlock.id);
+      
+      // Keep selectedIds synchronized with active playback automatically
+      setSelectedIds([currentActiveBlock.id]);
+    } else {
+      setActiveId(null);
+    }
+  } 
+  // 2. IF PAUSED: Retain whatever block the user manually clicked in the sidebar or timeline
+  else {
+    if (selectedIds.length > 0) {
+      setActiveId(selectedIds[0]);
+    }
+  }
+}, [currentTime, isPlaying, captions, videoSrc]);
 
   useEffect(() => {
     return () => {
