@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import WorkspaceHeader from './components/WorkspaceHeader';
 import TranscriptSidebar from './components/TranscriptSidebar';
 import VideoViewport from './components/VideoViewport';
@@ -38,6 +38,8 @@ export const STYLE_PRESETS = [
 ];
 
 export const renderCaptionFrame = (ctx, canvas, video, captions, captionStyles) => {
+  if (!video || !canvas || video.readyState < 2) return;
+  
   ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
   const currentTime = video.currentTime;
@@ -95,7 +97,6 @@ export const renderCaptionFrame = (ctx, canvas, video, captions, captionStyles) 
     }
     lines.push(currentLine);
 
-    // READ POSITIONS DYNAMICALLY (Fallback to standard bottom center if undefined)
     const currentXPercent = activeCap.xRel !== undefined ? activeCap.xRel : 0.5;
     const currentYPercent = activeCap.yRel !== undefined ? activeCap.yRel : 0.82;
 
@@ -103,7 +104,6 @@ export const renderCaptionFrame = (ctx, canvas, video, captions, captionStyles) 
     let initialYPos = canvas.height * currentYPercent; 
     const lineSpacingOffset = baseSize * 1.2;
 
-    // Save bounding calculation measurements back to reference object for bounding-box hits
     let calculatedMaxWidth = 0;
     lines.forEach(line => {
       const w = ctx.measureText(line).width;
@@ -119,10 +119,9 @@ export const renderCaptionFrame = (ctx, canvas, video, captions, captionStyles) 
       height: totalBlockHeight
     };
 
-    // Draw active bounding outlines visually on screen if the user is interacting
     if (canvas.hasAttribute('data-dragging-active')) {
       ctx.save();
-      ctx.strokeStyle = 'rgba(99, 102, 241, 0.85)'; // Indigo-500 line indicator
+      ctx.strokeStyle = 'rgba(99, 102, 241, 0.85)'; 
       ctx.lineWidth = 3;
       ctx.setLineDash([6, 4]);
       ctx.strokeRect(
@@ -185,7 +184,6 @@ export default function App() {
   const [duration, setDuration] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [activeId, setActiveId] = useState(null);
-  const [isLoading, setIsLoading] = useState(false);
   const [selectedIds, setSelectedIds] = useState([]);
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
@@ -212,8 +210,17 @@ export default function App() {
 
   const videoRef = useRef(null);
   const previewCanvasRef = useRef(null);
-  const dragStartRef = useRef(null);
 
+  // High performance references to bypass layout-pass race conditions entirely
+  const captionsRef = useRef(captions);
+  const currentTimeRef = useRef(currentTime);
+  const captionStylesRef = useRef(captionStyles);
+
+  useEffect(() => { captionsRef.current = captions; }, [captions]);
+  useEffect(() => { currentTimeRef.current = currentTime; }, [currentTime]);
+  useEffect(() => { captionStylesRef.current = captionStyles; }, [captionStyles]);
+
+  // Synchronize Active Subtitle Block ID
   useEffect(() => {
     if (!videoSrc) {
       setActiveId(null);
@@ -238,101 +245,162 @@ export default function App() {
     }
   }, [currentTime, isPlaying, captions, videoSrc]);
 
-// Add this effect block right inside your default export function App()
-useEffect(() => {
-  const canvasElement = previewCanvasRef.current;
-  if (!canvasElement) return;
+  // High Performance Canvas Interaction Sync Hook with Ref Pointers
+  useEffect(() => {
+    const canvasElement = previewCanvasRef.current;
+    if (!canvasElement) return;
 
-  let localIsDragging = false;
-  let dragConfig = null;
+    let localIsDragging = false;
+    let dragConfig = null;
 
-  const getCanvasRelativeCoords = (clientX, clientY) => {
-    const rect = canvasElement.getBoundingClientRect();
-    return {
-      canvasX: ((clientX - rect.left) / rect.width) * canvasElement.width,
-      canvasY: ((clientY - rect.top) / rect.height) * canvasElement.height,
-      viewportWidth: rect.width,
-      viewportHeight: rect.height
-    };
-  };
-
-  const onMouseDown = (e) => {
-    const activeCap = captions.find(c => currentTime >= c.start && currentTime <= c.end);
-    if (!activeCap || !activeCap._metaBoundingBox) return;
-
-    const { canvasX, canvasY, viewportWidth, viewportHeight } = getCanvasRelativeCoords(e.clientX, e.clientY);
-    const box = activeCap._metaBoundingBox;
-
-    // Detect if mouse click hits within boundaries of caption line layout
-    if (
-      canvasX >= box.centerX - (box.width / 2) - 30 &&
-      canvasX <= box.centerX + (box.width / 2) + 30 &&
-      canvasY >= box.topY - 30 &&
-      canvasY <= box.bottomY + 30
-    ) {
-      localIsDragging = true;
-      canvasElement.setAttribute('data-dragging-active', 'true');
-      
-      dragConfig = {
-        captionId: activeCap.id,
-        initialXRel: activeCap.xRel !== undefined ? activeCap.xRel : 0.5,
-        initialYRel: activeCap.yRel !== undefined ? activeCap.yRel : 0.82,
-        startX: e.clientX,
-        startY: e.clientY,
-        viewportWidth,
-        viewportHeight
+    const getCanvasRelativeCoords = (clientX, clientY) => {
+      const rect = canvasElement.getBoundingClientRect();
+      return {
+        canvasX: ((clientX - rect.left) / rect.width) * canvasElement.width,
+        canvasY: ((clientY - rect.top) / rect.height) * canvasElement.height,
+        viewportWidth: rect.width,
+        viewportHeight: rect.height
       };
-      
-      e.preventDefault();
-    }
-  };
+    };
 
-  const onMouseMove = (e) => {
-    if (!localIsDragging || !dragConfig) return;
+    const onMouseDown = (e) => {
+      const activeCap = captionsRef.current.find(c => currentTimeRef.current >= c.start && currentTimeRef.current <= c.end);
+      if (!activeCap || !activeCap._metaBoundingBox) return;
 
-    const currentDeltaX = e.clientX - dragConfig.startX;
-    const currentDeltaY = e.clientY - dragConfig.startY;
+      const { canvasX, canvasY, viewportWidth, viewportHeight } = getCanvasRelativeCoords(e.clientX, e.clientY);
+      const box = activeCap._metaBoundingBox;
 
-    const changeXRel = currentDeltaX / dragConfig.viewportWidth;
-    const changeYRel = currentDeltaY / dragConfig.viewportHeight;
-
-    setCaptions(prevTrackList => prevTrackList.map(item => {
-      if (item.id === dragConfig.captionId) {
-        return {
-          ...item,
-          xRel: Math.max(0.05, Math.min(0.95, dragConfig.initialXRel + changeXRel)),
-          yRel: Math.max(0.10, Math.min(0.98, dragConfig.initialYRel + changeYRel))
+      if (
+        canvasX >= box.centerX - (box.width / 2) - 30 &&
+        canvasX <= box.centerX + (box.width / 2) + 30 &&
+        canvasY >= box.topY - 30 &&
+        canvasY <= box.bottomY + 30
+      ) {
+        localIsDragging = true;
+        setIsDraggingText(true);
+        canvasElement.setAttribute('data-dragging-active', 'true');
+        
+        dragConfig = {
+          captionId: activeCap.id,
+          initialXRel: activeCap.xRel !== undefined ? activeCap.xRel : 0.5,
+          initialYRel: activeCap.yRel !== undefined ? activeCap.yRel : 0.82,
+          startX: e.clientX,
+          startY: e.clientY,
+          viewportWidth,
+          viewportHeight
         };
+        
+        e.preventDefault();
       }
-      return item;
-    }));
-  };
+    };
 
-  const onMouseUp = () => {
-    if (localIsDragging) {
-      localIsDragging = false;
-      dragConfig = null;
-      canvasElement.removeAttribute('data-dragging-active');
-    }
-  };
+    const onMouseMove = (e) => {
+      if (!localIsDragging || !dragConfig) return;
 
-  canvasElement.addEventListener('mousedown', onMouseDown);
-  window.addEventListener('mousemove', onMouseMove);
-  window.addEventListener('mouseup', onMouseUp);
+      const currentDeltaX = e.clientX - dragConfig.startX;
+      const currentDeltaY = e.clientY - dragConfig.startY;
 
-  return () => {
-    canvasElement.removeEventListener('mousedown', onMouseDown);
-    window.removeEventListener('mousemove', onMouseMove);
-    window.removeEventListener('mouseup', onMouseUp);
-  };
-}, [captions, currentTime]);
+      const changeXRel = currentDeltaX / dragConfig.viewportWidth;
+      const changeYRel = currentDeltaY / dragConfig.viewportHeight;
 
+      const targetCaption = captionsRef.current.find(item => item.id === dragConfig.captionId);
+      if (targetCaption) {
+        targetCaption.xRel = Math.max(0.05, Math.min(0.95, dragConfig.initialXRel + changeXRel));
+        targetCaption.yRel = Math.max(0.10, Math.min(0.98, dragConfig.initialYRel + changeYRel));
+      }
 
+      const ctx = canvasElement.getContext('2d');
+      if (videoRef.current) {
+        ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+        renderCaptionFrame(ctx, canvasElement, videoRef.current, captionsRef.current, captionStylesRef.current);
+      }
+    };
+
+    const onMouseUp = (e) => {
+      if (localIsDragging && dragConfig) {
+        const currentDeltaX = e.clientX - dragConfig.startX;
+        const currentDeltaY = e.clientY - dragConfig.startY;
+
+        const changeXRel = currentDeltaX / dragConfig.viewportWidth;
+        const changeYRel = currentDeltaY / dragConfig.viewportHeight;
+
+        const finalX = Math.max(0.05, Math.min(0.95, dragConfig.initialXRel + changeXRel));
+        const finalY = Math.max(0.10, Math.min(0.98, dragConfig.initialYRel + changeYRel));
+        
+        const targetId = dragConfig.captionId;
+
+        localIsDragging = false;
+        setIsDraggingText(false);
+        dragConfig = null;
+        canvasElement.removeAttribute('data-dragging-active');
+
+        setCaptions(prev => {
+          const updated = prev.map(item => item.id === targetId ? { ...item, xRel: finalX, yRel: finalY } : item);
+          
+          setTimeout(() => {
+            const ctx = canvasElement.getContext('2d');
+            if (videoRef.current) {
+              ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+              renderCaptionFrame(ctx, canvasElement, videoRef.current, updated, captionStylesRef.current);
+            }
+          }, 0);
+
+          return updated;
+        });
+      }
+    };
+
+    canvasElement.addEventListener('mousedown', onMouseDown);
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+
+    return () => {
+      canvasElement.removeEventListener('mousedown', onMouseDown);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+  }, []);
+
+  // Standard cleanup loop for blob tracking structures
   useEffect(() => {
     return () => {
       if (videoSrc && videoSrc.startsWith('blob:')) URL.revokeObjectURL(videoSrc);
     };
   }, [videoSrc]);
+
+  // Frame monitoring hook running layout passes when video parameters shift
+  useEffect(() => {
+    const canvas = previewCanvasRef.current;
+    const video = videoRef.current;
+    if (canvas && video) {
+      const ctx = canvas.getContext('2d');
+      renderCaptionFrame(ctx, canvas, video, captions, captionStyles);
+    }
+  }, [currentTime, captions, captionStyles]);
+
+  useEffect(() => {
+  let animId;
+
+  const updateLoop = () => {
+    const video = videoRef.current;
+    const canvas = previewCanvasRef.current;
+    
+    if (video && canvas && !video.paused && !video.ended) {
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      
+      // Pulls directly from fresh Ref pointers instead of stale component state
+      renderCaptionFrame(ctx, canvas, video, captionsRef.current, captionStylesRef.current);
+    }
+    
+    animId = requestAnimationFrame(updateLoop);
+  };
+
+  // Start the hardware-accelerated draw loop
+  animId = requestAnimationFrame(updateLoop);
+
+  return () => cancelAnimationFrame(animId);
+}, []);
 
   const handleVideoUpload = (e) => {
     const file = e.target.files[0];
@@ -367,18 +435,18 @@ useEffect(() => {
     setCaptions(prev => prev.map(c => c.id === id ? { ...c, [field]: value } : c));
   };
 
-const handleAddBlock = () => {
-  const last = captions[captions.length - 1];
-  const start = last ? parseFloat((last.end + 0.1).toFixed(1)) : 0;
-  setCaptions([...captions, { 
-    id: Date.now().toString(), 
-    start, 
-    end: start + 2.5, 
-    text: "New subtitle line...",
-    xRel: 0.5,
-    yRel: 0.82 
-  }]);
-};
+  const handleAddBlock = () => {
+    const last = captions[captions.length - 1];
+    const start = last ? parseFloat((last.end + 0.1).toFixed(1)) : 0;
+    setCaptions([...captions, { 
+      id: Date.now().toString(), 
+      start, 
+      end: start + 2.5, 
+      text: "New subtitle line...",
+      xRel: 0.5,
+      yRel: 0.82 
+    }]);
+  };
 
   const handleDeleteBlock = (id) => {
     setCaptions(prev => prev.filter(c => c.id !== id));
@@ -428,12 +496,9 @@ const handleAddBlock = () => {
 
   const handleCustomStyleChange = (field, value) => {
     setCaptionStyles(prev => ({ ...prev, preset: 'custom', [field]: value }));
-    
     if (selectedIds.length > 0) {
       setCaptions(prevCaptions => 
-        prevCaptions.map(c => 
-          selectedIds.includes(c.id) ? { ...c, [field]: value } : c
-        )
+        prevCaptions.map(c => selectedIds.includes(c.id) ? { ...c, [field]: value } : c)
       );
     }
   };
@@ -457,7 +522,7 @@ const handleAddBlock = () => {
     });
   }
 
-  const handleExportVideo = async () => {
+const handleExportVideo = async () => {
     if (!videoSrc || !videoRef.current) return;
 
     setIsExporting(true);
@@ -481,15 +546,28 @@ const handleAddBlock = () => {
 
     const videoStream = exportCanvas.captureStream(30);
     let combinedStream = videoStream;
-    let audioContext = null;
-    let audioSource = null;
     let audioDestination = null;
 
+    // Persist and reuse AudioContext globally to prevent resource lockups on the HTML5 video element
+    if (!window._sharedAudioContext) {
+      window._sharedAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+      window._sharedAudioSource = window._sharedAudioContext.createMediaElementSource(mainVideo);
+    }
+
+    const audioContext = window._sharedAudioContext;
+    const audioSource = window._sharedAudioSource;
+
     try {
-      audioContext = new (window.AudioContext || window.webkitAudioContext)();
-      audioSource = audioContext.createMediaElementSource(mainVideo);
+      if (audioContext.state === 'suspended') {
+        await audioContext.resume();
+      }
+
+      // Safely disconnect any previous graph pipelines before reconstruction
+      audioSource.disconnect();
+      
       audioDestination = audioContext.createMediaStreamDestination();
       
+      // Multi-route: Send audio to the recorder track AND back to standard speaker nodes
       audioSource.connect(audioDestination);
       audioSource.connect(audioContext.destination);
 
@@ -503,7 +581,9 @@ const handleAddBlock = () => {
     }
 
     const recorder = RecordRTC(combinedStream, {
-      type: 'video', mimeType: 'video/webm', bitsPerSecond: 8000000
+      type: 'video', 
+      mimeType: 'video/webm', 
+      bitsPerSecond: 8000000
     });
 
     recorder.startRecording();
@@ -549,10 +629,13 @@ const handleAddBlock = () => {
         document.body.removeChild(anchor);
         URL.revokeObjectURL(url);
 
-        if (audioContext) {
+        // CLEANUP STEP: Tear down target streams but route standard element channel back to speakers
+        if (audioSource) {
           audioSource.disconnect();
+          audioSource.connect(audioContext.destination);
+        }
+        if (audioDestination) {
           audioDestination.disconnect();
-          audioContext.close();
         }
 
         mainVideo.pause();
@@ -605,10 +688,11 @@ const handleAddBlock = () => {
                 videoSrc={videoSrc} videoRef={videoRef} previewCanvasRef={previewCanvasRef} isPlaying={isPlaying} currentTime={currentTime} duration={duration} activeCaption={currentActiveCaption} captions={captions} captionStyles={activeViewportStyles} onTogglePlay={handleTogglePlay}
                 onTimeUpdate={() => setCurrentTime(videoRef.current?.currentTime || 0)}
                 onLoadedMetadata={() => setDuration(videoRef.current?.duration || 0)}
+                setCaptions={setCaptions}
               />
             </div>
 
-            {/* Config Panel Right column */}
+            {/* Config Panel Right Column */}
             <div className="lg:col-span-1 bg-zinc-900/30 border border-zinc-800/60 rounded-2xl p-4 flex flex-col gap-4 h-full overflow-y-auto custom-scrollbar">
               <div className="flex items-center justify-between border-b border-zinc-800 pb-2 shrink-0">
                 <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-1.5">
@@ -681,25 +765,23 @@ const handleAddBlock = () => {
                       </div>
                     </div>
                   </div>
-
-                  <div className="flex flex-col gap-1">
-                    <div className="flex justify-between text-[10px] text-zinc-500 font-bold uppercase tracking-wider">
-                      <label>Outline Width</label>
-                      <span>{Math.round((captionStyles.strokeWidth !== undefined ? captionStyles.strokeWidth : 0.14) * 100)}%</span>
-                    </div>
-                    <input type="range" min="0" max="0.30" step="0.02" value={captionStyles.strokeWidth !== undefined ? captionStyles.strokeWidth : 0.14} onChange={(e) => handleCustomStyleChange('strokeWidth', parseFloat(e.target.value))} className="w-full h-1 accent-indigo-500 bg-zinc-800 rounded cursor-pointer" />
-                  </div>
-
-                  <div className="flex items-center justify-between p-2.5 bg-zinc-950 border border-zinc-800 rounded-lg">
-                    <label className="text-zinc-400 font-bold uppercase text-[10px] tracking-wider cursor-pointer select-none" htmlFor="shadowToggle">Enable Shadow Drop</label>
-                    <input id="shadowToggle" type="checkbox" checked={!!captionStyles.shadow} onChange={(e) => handleCustomStyleChange('shadow', e.target.checked)} className="w-4 h-4 accent-indigo-500 cursor-pointer bg-zinc-900 border-zinc-800 rounded focus:ring-0" />
-                  </div>
                 </div>
               ) : (
-                <div className="space-y-2">
-                  {STYLE_PRESETS.map(p => (
-                    <button key={p.id} onClick={() => setThemePreset(p)} className={`w-full text-left p-3 rounded-xl border text-xs font-medium transition duration-150 ${captionStyles.preset === p.id ? 'bg-indigo-600/10 border-indigo-500 text-white shadow-md' : 'bg-zinc-900/40 border-zinc-800 text-zinc-400 hover:border-zinc-700'}`}>
-                      {p.name}
+                <div className="flex-1 overflow-y-auto pr-1 space-y-1.5 max-h-[480px] custom-scrollbar">
+                  {STYLE_PRESETS.map((preset) => (
+                    <button
+                      key={preset.id}
+                      onClick={() => setThemePreset(preset)}
+                      className={`w-full text-left p-2.5 rounded-xl border transition-all text-xs flex flex-col gap-1 ${
+                        captionStyles.preset === preset.id
+                          ? 'bg-indigo-600/15 border-indigo-500/80 text-white shadow-sm'
+                          : 'bg-zinc-950/40 border-zinc-800/80 text-zinc-300 hover:bg-zinc-900/60 hover:text-white'
+                      }`}
+                    >
+                      <span className="font-semibold">{preset.name}</span>
+                      <span className="text-[10px] opacity-40 font-mono truncate">
+                        {preset.font.split(',')[0]} • {preset.size}
+                      </span>
                     </button>
                   ))}
                 </div>
@@ -707,7 +789,7 @@ const handleAddBlock = () => {
             </div>
           </div>
 
-          <div style={{ height: isTimelineOpen ? '220px' : '0px' }} className="shrink-0 w-full bg-zinc-900 overflow-hidden transition-[height] duration-200">
+          <div className="shrink-0 w-full bg-zinc-900 h-[220px] overflow-hidden">
             <TimelineTrack videoSrc={videoSrc} captions={captions} currentTime={currentTime} duration={duration} activeId={activeId} selectedIds={selectedIds} onSelectCaption={handleSelectCaption} onSeek={handleTimelineSeek} />       
           </div>
         </main>
