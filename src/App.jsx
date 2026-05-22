@@ -3,7 +3,7 @@ import WorkspaceHeader from './components/WorkspaceHeader';
 import TranscriptSidebar from './components/TranscriptSidebar';
 import VideoViewport from './components/VideoViewport';
 import TimelineTrack from './components/TimelineTrack';
-import { Layers, Edit3, X, ChevronUp, ChevronDown } from 'lucide-react';
+import { Layers, Edit3, X, Bold, Italic, Underline, Strikethrough, Sparkles } from 'lucide-react';
 import RecordRTC from 'recordrtc';
 
 const INITIAL_CAPTIONS = [
@@ -509,34 +509,161 @@ export default function App() {
             </div>
 
             {/* Config Panel Right column */}
-            <div className="lg:col-span-1 bg-zinc-900/30 border border-zinc-800/60 rounded-2xl p-4 flex flex-col gap-4 h-full overflow-y-auto">
+            <div className="lg:col-span-1 bg-zinc-900/30 border border-zinc-800/60 rounded-2xl p-4 flex flex-col gap-4 h-full overflow-y-auto custom-scrollbar">
               <div className="flex items-center justify-between border-b border-zinc-800 pb-2 shrink-0">
-                <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Style Deck Presets</span>
-                <button onClick={() => setCaptionStyles(prev => ({ ...prev, isEditingCustom: !prev.isEditingCustom }))} className="p-1 rounded bg-zinc-900 text-zinc-400">
+                <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-1.5">
+                  {captionStyles.isEditingCustom ? <Sparkles className="w-3.5 h-3.5 text-indigo-400"/> : <Layers className="w-3.5 h-3.5 text-indigo-400"/>}
+                  {captionStyles.isEditingCustom ? "Custom Controls" : "Style Presets"}
+                </span>
+                <button 
+                  onClick={() => setCaptionStyles(prev => ({ ...prev, isEditingCustom: !prev.isEditingCustom }))} 
+                  className={`p-1.5 rounded transition ${captionStyles.isEditingCustom ? 'bg-indigo-600 text-white' : 'bg-zinc-900 text-zinc-400 hover:text-zinc-200'}`}
+                >
                   {captionStyles.isEditingCustom ? <X className="w-4 h-4" /> : <Edit3 className="w-4 h-4" />}
                 </button>
               </div>
 
               {captionStyles.isEditingCustom ? (
                 <div className="space-y-4 text-xs">
+                  {/* Font Family Selection */}
                   <div className="flex flex-col gap-1">
-                    <label className="text-zinc-500 font-bold uppercase text-[10px] tracking-wider">Font Family</label>
-                    <select value={captionStyles.fontFamily} onChange={(e) => handleCustomStyleChange('fontFamily', e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded p-1.5 text-zinc-200">
-                      <option value="Impact, Arial Black, sans-serif">KINETIC (Impact)</option>
-                      <option value="system-ui, sans-serif">MINIMAL SANS</option>
-                      <option value="'Courier New', Courier, monospace">SYSTEM COURIER</option>
-                      <option value="Georgia, serif">RETRO GEORGIA</option>
+                    <label className="text-zinc-500 font-bold uppercase text-[10px] tracking-wider">Font Style Preset</label>
+                    <select 
+                      value={captionStyles.fontFamily} 
+                      onChange={(e) => handleCustomStyleChange('fontFamily', e.target.value)} 
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded p-1.5 text-zinc-200 focus:outline-none focus:border-indigo-500"
+                    >
+                      <option value="Impact, Arial Black, sans-serif">Impact (Kinetic Bold)</option>
+                      <option value="system-ui, sans-serif">System Sans (Minimal)</option>
+                      <option value="'Courier New', Courier, monospace">Courier (Typewriter)</option>
+                      <option value="Georgia, serif">Georgia (Retro Serif)</option>
+                      <option value="Montserrat, sans-serif">Montserrat (Geometric)</option>
+                      <option value="Arial Black, sans-serif">Arial Black (Heavy)</option>
+                      <option value="'Comic Sans MS', cursive">Comic Sans (Punchy)</option>
+                      <option value="Inter, sans-serif">Inter (Clean Sub)</option>
                     </select>
                   </div>
-                  
+
+                  {/* Font Size Configuration */}
                   <div className="flex flex-col gap-1">
-                    <label className="text-zinc-500 font-bold uppercase text-[10px] tracking-wider">Text Color</label>
-                    <input type="color" value={captionStyles.color} onChange={(e) => handleCustomStyleChange('color', e.target.value)} className="w-full bg-transparent h-8 border border-zinc-800 rounded cursor-pointer" />
+                    <div className="flex justify-between text-[10px] text-zinc-500 font-bold uppercase tracking-wider">
+                      <label>Font Size</label>
+                      <span>{captionStyles.fontSize}</span>
+                    </div>
+                    <input 
+                      type="range" 
+                      min="16" 
+                      max="100" 
+                      step="2"
+                      value={parseInt(captionStyles.fontSize) || 48} 
+                      onChange={(e) => handleCustomStyleChange('fontSize', `${e.target.value}px`)} 
+                      className="w-full h-1 accent-indigo-500 bg-zinc-800 rounded cursor-pointer"
+                    />
+                  </div>
+
+                  {/* Letter Case Transform Switch */}
+                  <div className="flex flex-col gap-1">
+                    <label className="text-zinc-500 font-bold uppercase text-[10px] tracking-wider">Case Style</label>
+                    <select 
+                      value={captionStyles.textTransform} 
+                      onChange={(e) => handleCustomStyleChange('textTransform', e.target.value)} 
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded p-1.5 text-zinc-200 focus:outline-none"
+                    >
+                      <option value="uppercase">UPPERCASE</option>
+                      <option value="none">As Written (Standard)</option>
+                    </select>
+                  </div>
+
+                  {/* Text Decoration Row (Bold / Italic / Underline / Strike) */}
+                  <div className="flex flex-col gap-1">
+                    <label className="text-zinc-500 font-bold uppercase text-[10px] tracking-wider">Text Modifiers</label>
+                    <div className="grid grid-cols-4 gap-1 bg-zinc-950 border border-zinc-800 p-1 rounded-lg text-center">
+                      <button 
+                        type="button"
+                        onClick={() => handleCustomStyleChange('fontWeight', captionStyles.fontWeight === '900' ? '400' : '900')} 
+                        className={`p-2 rounded flex justify-center transition ${captionStyles.fontWeight === '900' ? 'text-indigo-400 bg-indigo-500/10 font-black' : 'text-zinc-500 hover:text-zinc-300'}`}
+                        title="Bold Weight"
+                      >
+                        <Bold className="w-3.5 h-3.5" />
+                      </button>
+                      <button 
+                        type="button"
+                        onClick={() => handleCustomStyleChange('fontStyle', captionStyles.fontStyle === 'italic' ? 'normal' : 'italic')} 
+                        className={`p-2 rounded flex justify-center transition ${captionStyles.fontStyle === 'italic' ? 'text-indigo-400 bg-indigo-500/10' : 'text-zinc-500 hover:text-zinc-300'}`}
+                        title="Italic Slant"
+                      >
+                        <Italic className="w-3.5 h-3.5" />
+                      </button>
+                      <button 
+                        type="button"
+                        onClick={() => handleCustomStyleChange('underline', !captionStyles.underline)} 
+                        className={`p-2 rounded flex justify-center transition ${captionStyles.underline ? 'text-indigo-400 bg-indigo-500/10' : 'text-zinc-500 hover:text-zinc-300'}`}
+                        title="Underline Line"
+                      >
+                        <Underline className="w-3.5 h-3.5" />
+                      </button>
+                      <button 
+                        type="button"
+                        onClick={() => handleCustomStyleChange('strike', !captionStyles.strike)} 
+                        className={`p-2 rounded flex justify-center transition ${captionStyles.strike ? 'text-indigo-400 bg-indigo-500/10' : 'text-zinc-500 hover:text-zinc-300'}`}
+                        title="Strike Through"
+                      >
+                        <Strikethrough className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Dual Station Colors (Fill and Border Stroke) */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="flex flex-col gap-1">
+                      <label className="text-zinc-500 font-bold uppercase text-[10px] tracking-wider">Text Color</label>
+                      <div className="flex items-center bg-zinc-950 border border-zinc-800 rounded p-1">
+                        <input type="color" value={captionStyles.color} onChange={(e) => handleCustomStyleChange('color', e.target.value)} className="w-6 h-6 bg-transparent border-0 cursor-pointer rounded" />
+                        <span className="ml-1.5 font-mono text-[10px] text-zinc-400 uppercase">{captionStyles.color}</span>
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-zinc-500 font-bold uppercase text-[10px] tracking-wider">Stroke Color</label>
+                      <div className="flex items-center bg-zinc-950 border border-zinc-800 rounded p-1">
+                        <input type="color" value={captionStyles.strokeColor || '#000000'} onChange={(e) => handleCustomStyleChange('strokeColor', e.target.value)} className="w-6 h-6 bg-transparent border-0 cursor-pointer rounded" />
+                        <span className="ml-1.5 font-mono text-[10px] text-zinc-400 uppercase">{captionStyles.strokeColor || '#000000'}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Outliner Border Weight Slider */}
+                  <div className="flex flex-col gap-1">
+                    <div className="flex justify-between text-[10px] text-zinc-500 font-bold uppercase tracking-wider">
+                      <label>Outline Width</label>
+                      <span>{Math.round((captionStyles.strokeWidth !== undefined ? captionStyles.strokeWidth : 0.14) * 100)}%</span>
+                    </div>
+                    <input 
+                      type="range" 
+                      min="0" 
+                      max="0.30" 
+                      step="0.02"
+                      value={captionStyles.strokeWidth !== undefined ? captionStyles.strokeWidth : 0.14} 
+                      onChange={(e) => handleCustomStyleChange('strokeWidth', parseFloat(e.target.value))} 
+                      className="w-full h-1 accent-indigo-500 bg-zinc-800 rounded cursor-pointer"
+                    />
+                  </div>
+
+                  {/* Drop Shadow Flag */}
+                  <div className="flex items-center justify-between p-2.5 bg-zinc-950 border border-zinc-800 rounded-lg">
+                    <label className="text-zinc-400 font-bold uppercase text-[10px] tracking-wider cursor-pointer select-none" htmlFor="shadowToggle">
+                      Enable Shadow Drop
+                    </label>
+                    <input 
+                      id="shadowToggle"
+                      type="checkbox" 
+                      checked={!!captionStyles.shadow}
+                      onChange={(e) => handleCustomStyleChange('shadow', e.target.checked)}
+                      className="w-4 h-4 accent-indigo-500 cursor-pointer bg-zinc-900 border-zinc-800 rounded focus:ring-0"
+                    />
                   </div>
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {/* 🔥 FIXED SYSTEM LINK: Correctly maps over the full 10-item global array */}
                   {STYLE_PRESETS.map(p => (
                     <button 
                       key={p.id} 
