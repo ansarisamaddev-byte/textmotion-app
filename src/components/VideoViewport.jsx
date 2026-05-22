@@ -13,14 +13,38 @@ export default function VideoViewport({
   captionStyles,    
   onTogglePlay, 
   onTimeUpdate, 
-  onLoadedMetadata 
+  onLoadedMetadata,
+  previewCanvasRef, 
+  setCaptions       
 }) {
   const [zoomScale, setZoomScale] = useState(100);
   const [panPosition, setPanPosition] = useState({ x: 0, y: 0 });
-  const [isDragging, setIsDragging] = useState(false);
+  const [isViewportDragging, setIsViewportDragging] = useState(false);
   
-  const dragStart = useRef({ x: 0, y: 0 });
-  const previewCanvasRef = useRef(null);
+  const viewportDragStart = useRef({ x: 0, y: 0 });
+  const textDragConfig = useRef(null); 
+
+  const captionsRef = useRef(captions);
+  useEffect(() => {
+    captionsRef.current = captions;
+  }, [captions]);
+
+  // --- KEYBOARD SPACEBAR LISTENERS ---
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      // Avoid triggering when user typing inside input boxes or textareas
+      if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA') {
+        return;
+      }
+      if (e.code === 'Space') {
+        e.preventDefault(); // Stop page scrolling downwards
+        if (videoSrc) onTogglePlay();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onTogglePlay, videoSrc]);
 
   const formatTime = (timeInSeconds) => {
     if (isNaN(timeInSeconds)) return "0:00";
@@ -39,92 +63,173 @@ export default function VideoViewport({
     videoRef.current.currentTime = newTime;
   };
 
-  const handleMouseDown = (e) => {
-    if (zoomScale <= 100 || !videoSrc) return;
-    setIsDragging(true);
-    dragStart.current = { x: e.clientX - panPosition.x, y: e.clientY - panPosition.y };
+  const getCanvasRelativeCoords = (clientX, clientY, canvasElement) => {
+    const rect = canvasElement.getBoundingClientRect();
+    return {
+      canvasX: ((clientX - rect.left) / rect.width) * canvasElement.width,
+      canvasY: ((clientY - rect.top) / rect.height) * canvasElement.height,
+      viewportWidth: rect.width,
+      viewportHeight: rect.height
+    };
   };
 
-  const handleMouseMove = (e) => {
-    if (!isDragging) return;
-    setPanPosition({
-      x: e.clientX - dragStart.current.x,
-      y: e.clientY - dragStart.current.y
-    });
-  };
+  const handleCanvasMouseDown = (e) => {
+    const canvas = previewCanvasRef.current;
+    if (!canvas || !videoSrc) return;
 
-  const handleMouseUp = () => {
-    setIsDragging(false);
-  };
+    const activeCap = captionsRef.current?.find(c => currentTime >= c.start && currentTime <= c.end);
+    
+    if (activeCap && activeCap._metaBoundingBox) {
+      const { canvasX, canvasY, viewportWidth, viewportHeight } = getCanvasRelativeCoords(e.clientX, e.clientY, canvas);
+      const box = activeCap._metaBoundingBox;
 
-  const handleResetView = () => {
-    setZoomScale(100);
-    setPanPosition({ x: 0, y: 0 });
-  };
+      // Click accuracy checking window
+      const isWithinX = canvasX >= (box.centerX - (box.width / 2) - 60) && canvasX <= (box.centerX + (box.width / 2) + 60);
+      const isWithinY = canvasY >= (box.topY - 60) && canvasY <= (box.bottomY + 60);
 
-  useEffect(() => {
-    if (isDragging) {
-      window.addEventListener('mouseup', handleMouseUp);
-    }
-    return () => window.removeEventListener('mouseup', handleMouseUp);
-  }, [isDragging]);
+      if (isWithinX && isWithinY) {
+        e.preventDefault();
+        e.stopPropagation();
 
-// 🔥 FIXED: Bulletproof Canvas Frame Synchronization Loop
-useEffect(() => {
-  const video = videoRef.current;
-  const canvas = previewCanvasRef.current;
-  if (!video || !canvas || !videoSrc) return;
+        textDragConfig.current = {
+          captionId: activeCap.id,
+          initialXRel: activeCap.xRel !== undefined ? activeCap.xRel : 0.5,
+          initialYRel: activeCap.yRel !== undefined ? activeCap.yRel : 0.82,
+          startX: e.clientX,
+          startY: e.clientY,
+          viewportWidth,
+          viewportHeight
+        };
 
-  const ctx = canvas.getContext('2d');
-  let frameId = null;
-
-  const syncCanvasAndDraw = (shouldClear = false) => {
-    // 1. Align resolution grids cleanly
-    if (video.videoWidth && (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight)) {
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
+        window.addEventListener('mousemove', handleGlobalMouseMove, { passive: true });
+        window.addEventListener('mouseup', handleGlobalMouseUp);
+        return; 
+      }
     }
 
-    // 2. Only clear when explicitly requested (during active playback loops)
-    if (shouldClear) {
+    if (zoomScale > 100) {
+      setIsViewportDragging(true);
+      viewportDragStart.current = { x: e.clientX - panPosition.x, y: e.clientY - panPosition.y };
+      window.addEventListener('mousemove', handleGlobalMouseMove, { passive: true });
+      window.addEventListener('mouseup', handleGlobalMouseUp);
+    }
+  };
+
+  const handleGlobalMouseMove = (e) => {
+    if (textDragConfig.current) {
+      const config = textDragConfig.current;
+      const canvas = previewCanvasRef.current;
+      const video = videoRef.current;
+      if (!canvas || !video) return;
+
+      const currentDeltaX = e.clientX - config.startX;
+      const currentDeltaY = e.clientY - config.startY;
+
+      const changeXRel = currentDeltaX / config.viewportWidth;
+      const changeYRel = currentDeltaY / config.viewportHeight;
+
+      // Update in-memory positions instantly
+      const calculatedX = Math.max(0.01, Math.min(0.99, config.initialXRel + changeXRel));
+      const calculatedY = Math.max(0.01, Math.min(0.99, config.initialYRel + changeYRel));
+
+      const activeCap = captionsRef.current?.find(c => c.id === config.captionId);
+      if (activeCap) {
+        activeCap.xRel = calculatedX;
+        activeCap.yRel = calculatedY;
+      }
+
+      // Render instantly on the underlying Canvas node directly bypassing layout passes
+      const ctx = canvas.getContext('2d');
       ctx.clearRect(0, 0, canvas.width, canvas.height);
+      renderCaptionFrame(ctx, canvas, video, captionsRef.current || [], captionStyles);
+    } else if (isViewportDragging) {
+      setPanPosition({
+        x: e.clientX - viewportDragStart.current.x,
+        y: e.clientY - viewportDragStart.current.y
+      });
     }
-
-    // 3. Paint both video and subtitle matrix strings
-    renderCaptionFrame(ctx, canvas, video, captions || [], captionStyles);
   };
 
-  const playbackLoop = () => {
-    // Clear is safe here because frames are streaming constantly at 60Hz
-    syncCanvasAndDraw(true); 
-    if (!video.paused && !video.ended) {
+  const handleGlobalMouseUp = (e) => {
+    window.removeEventListener('mousemove', handleGlobalMouseMove);
+    window.removeEventListener('mouseup', handleGlobalMouseUp);
+
+    if (textDragConfig.current) {
+      const config = textDragConfig.current;
+      
+      const finalDeltaX = e.clientX - config.startX;
+      const finalDeltaY = e.clientY - config.startY;
+
+      const changeXRel = finalDeltaX / config.viewportWidth;
+      const changeYRel = finalDeltaY / config.viewportHeight;
+
+      const calculatedX = Math.max(0.01, Math.min(0.99, config.initialXRel + changeXRel));
+      const calculatedY = Math.max(0.01, Math.min(0.99, config.initialYRel + changeYRel));
+
+      // Single state sync update executed only on user release drop sequence
+      setCaptions(prevTrackList => prevTrackList.map(item => {
+        if (item.id === config.captionId) {
+          return { ...item, xRel: calculatedX, yRel: calculatedY };
+        }
+        return item;
+      }));
+
+      textDragConfig.current = null;
+    }
+    setIsViewportDragging(false);
+  };
+
+  // Canvas Frame Synchronization Loop
+  useEffect(() => {
+    const video = videoRef.current;
+    const canvas = previewCanvasRef.current;
+    if (!video || !canvas || !videoSrc) return;
+
+    const ctx = canvas.getContext('2d');
+    let frameId = null;
+
+    const syncCanvasAndDraw = (shouldClear = false) => {
+      if (video.videoWidth && (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight)) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+      }
+
+      if (shouldClear) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      }
+
+      renderCaptionFrame(ctx, canvas, video, captions || [], captionStyles);
+    };
+
+    const playbackLoop = () => {
+      if (!textDragConfig.current) {
+        syncCanvasAndDraw(true); 
+      }
+      if (!video.paused && !video.ended) {
+        frameId = requestAnimationFrame(playbackLoop);
+      }
+    };
+
+    if (isPlaying) {
       frameId = requestAnimationFrame(playbackLoop);
+    } else {
+      syncCanvasAndDraw(false);
     }
-  };
 
-  if (isPlaying) {
-    frameId = requestAnimationFrame(playbackLoop);
-  } else {
-    // 🔥 THE FIX: Draw instantly WITHOUT clearing the canvas first.
-    // This safely preserves the last rendered video frame image array perfectly.
-    syncCanvasAndDraw(false);
-  }
-
-  return () => {
-    if (frameId) cancelAnimationFrame(frameId);
-  };
-}, [isPlaying, currentTime, captions, captionStyles, videoSrc, videoRef]);
+    return () => {
+      if (frameId) cancelAnimationFrame(frameId);
+      window.removeEventListener('mousemove', handleGlobalMouseMove);
+      window.removeEventListener('mouseup', handleGlobalMouseUp);
+    };
+  }, [isPlaying, currentTime, captions, captionStyles, videoSrc, videoRef, previewCanvasRef]);
 
   return (
     <div className="relative flex-1 bg-zinc-900/40 border border-zinc-800/60 rounded-2xl overflow-hidden flex flex-col justify-between p-3 h-full min-h-0 select-none backdrop-blur-sm">
       
-      {/* Main Monitoring Deck */}
+      {/* Main Monitoring Deck Wrapper */}
       <div 
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        className={`relative flex-1 flex items-center justify-center min-h-0 w-full rounded-xl bg-zinc-950 border border-zinc-900/60 overflow-hidden group shadow-inner ${
-          zoomScale > 100 && videoSrc ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
-        }`}
+        onMouseDown={handleCanvasMouseDown}
+        className="relative flex-1 flex items-center justify-center min-h-0 w-full rounded-xl bg-zinc-950 border border-zinc-900/60 overflow-hidden group shadow-inner cursor-default"
       >
         {!videoSrc && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-zinc-500 font-mono text-xs z-10 bg-zinc-950">
@@ -152,11 +257,8 @@ useEffect(() => {
           className="relative max-h-full max-w-full w-full h-full items-center justify-center transition-transform duration-75 ease-out"
         >
           <canvas
-            ref={previewCanvasRef}
-            onClick={(e) => {
-              if (zoomScale <= 100) onTogglePlay();
-            }}
-            className="max-h-full max-w-full object-contain bg-black rounded-xl shadow-2xl pointer-events-auto cursor-pointer"
+            ref={previewCanvasRef} 
+            className="max-h-full max-w-full object-contain bg-black rounded-xl shadow-2xl pointer-events-auto"
             style={{ aspectRatio: '9/16' }}
           />
         </div>

@@ -9,15 +9,18 @@ import RecordRTC from 'recordrtc';
 const INITIAL_CAPTIONS = [
   { 
     id: '1', start: 0.0, end: 2.5, text: "Welcome to TextMotion project dashboard!",
-    fontFamily: 'Impact, Arial Black, sans-serif', fontSize: '48px', fontWeight: '900', fontStyle: 'normal', color: '#fbbf24', textTransform: 'uppercase'
+    fontFamily: 'Impact, Arial Black, sans-serif', fontSize: '48px', fontWeight: '900', fontStyle: 'normal', color: '#fbbf24', textTransform: 'uppercase',
+    xRel: 0.5, yRel: 0.82 
   },
   { 
     id: '2', start: 2.6, end: 5.5, text: "This is a clean, modular React implementation.",
-    fontFamily: 'Impact, Arial Black, sans-serif', fontSize: '48px', fontWeight: '900', fontStyle: 'normal', color: '#fbbf24', textTransform: 'uppercase'
+    fontFamily: 'Impact, Arial Black, sans-serif', fontSize: '48px', fontWeight: '900', fontStyle: 'normal', color: '#fbbf24', textTransform: 'uppercase',
+    xRel: 0.5, yRel: 0.82
   },
   { 
     id: '3', start: 5.6, end: 9.0, text: "Ready to scale with your custom enhancements.",
-    fontFamily: 'Impact, Arial Black, sans-serif', fontSize: '48px', fontWeight: '900', fontStyle: 'normal', color: '#fbbf24', textTransform: 'uppercase'
+    fontFamily: 'Impact, Arial Black, sans-serif', fontSize: '48px', fontWeight: '900', fontStyle: 'normal', color: '#fbbf24', textTransform: 'uppercase',
+    xRel: 0.5, yRel: 0.82
   }
 ];
 
@@ -92,9 +95,44 @@ export const renderCaptionFrame = (ctx, canvas, video, captions, captionStyles) 
     }
     lines.push(currentLine);
 
-    const xPos = canvas.width / 2;
-    let initialYPos = canvas.height * 0.82; 
+    // READ POSITIONS DYNAMICALLY (Fallback to standard bottom center if undefined)
+    const currentXPercent = activeCap.xRel !== undefined ? activeCap.xRel : 0.5;
+    const currentYPercent = activeCap.yRel !== undefined ? activeCap.yRel : 0.82;
+
+    const xPos = canvas.width * currentXPercent;
+    let initialYPos = canvas.height * currentYPercent; 
     const lineSpacingOffset = baseSize * 1.2;
+
+    // Save bounding calculation measurements back to reference object for bounding-box hits
+    let calculatedMaxWidth = 0;
+    lines.forEach(line => {
+      const w = ctx.measureText(line).width;
+      if (w > calculatedMaxWidth) calculatedMaxWidth = w;
+    });
+
+    const totalBlockHeight = lines.length * lineSpacingOffset;
+    activeCap._metaBoundingBox = {
+      centerX: xPos,
+      bottomY: canvas.height * currentYPercent,
+      topY: (canvas.height * currentYPercent) - totalBlockHeight,
+      width: calculatedMaxWidth,
+      height: totalBlockHeight
+    };
+
+    // Draw active bounding outlines visually on screen if the user is interacting
+    if (canvas.hasAttribute('data-dragging-active')) {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(99, 102, 241, 0.85)'; // Indigo-500 line indicator
+      ctx.lineWidth = 3;
+      ctx.setLineDash([6, 4]);
+      ctx.strokeRect(
+        xPos - (calculatedMaxWidth / 2) - 16,
+        activeCap._metaBoundingBox.topY - 8,
+        calculatedMaxWidth + 32,
+        totalBlockHeight + 16
+      );
+      ctx.restore();
+    }
 
     for (let j = lines.length - 1; j >= 0; j--) {
       const currentTextLine = lines[j];
@@ -154,6 +192,7 @@ export default function App() {
 
   const [sidebarWidth, setSidebarWidth] = useState(220); 
   const [isTimelineOpen, setIsTimelineOpen] = useState(true);
+  const [isDraggingText, setIsDraggingText] = useState(false);
 
   const [captionStyles, setCaptionStyles] = useState({
     preset: 'bold-kinetic',
@@ -173,6 +212,7 @@ export default function App() {
 
   const videoRef = useRef(null);
   const previewCanvasRef = useRef(null);
+  const dragStartRef = useRef(null);
 
   useEffect(() => {
     if (!videoSrc) {
@@ -197,6 +237,96 @@ export default function App() {
       }
     }
   }, [currentTime, isPlaying, captions, videoSrc]);
+
+// Add this effect block right inside your default export function App()
+useEffect(() => {
+  const canvasElement = previewCanvasRef.current;
+  if (!canvasElement) return;
+
+  let localIsDragging = false;
+  let dragConfig = null;
+
+  const getCanvasRelativeCoords = (clientX, clientY) => {
+    const rect = canvasElement.getBoundingClientRect();
+    return {
+      canvasX: ((clientX - rect.left) / rect.width) * canvasElement.width,
+      canvasY: ((clientY - rect.top) / rect.height) * canvasElement.height,
+      viewportWidth: rect.width,
+      viewportHeight: rect.height
+    };
+  };
+
+  const onMouseDown = (e) => {
+    const activeCap = captions.find(c => currentTime >= c.start && currentTime <= c.end);
+    if (!activeCap || !activeCap._metaBoundingBox) return;
+
+    const { canvasX, canvasY, viewportWidth, viewportHeight } = getCanvasRelativeCoords(e.clientX, e.clientY);
+    const box = activeCap._metaBoundingBox;
+
+    // Detect if mouse click hits within boundaries of caption line layout
+    if (
+      canvasX >= box.centerX - (box.width / 2) - 30 &&
+      canvasX <= box.centerX + (box.width / 2) + 30 &&
+      canvasY >= box.topY - 30 &&
+      canvasY <= box.bottomY + 30
+    ) {
+      localIsDragging = true;
+      canvasElement.setAttribute('data-dragging-active', 'true');
+      
+      dragConfig = {
+        captionId: activeCap.id,
+        initialXRel: activeCap.xRel !== undefined ? activeCap.xRel : 0.5,
+        initialYRel: activeCap.yRel !== undefined ? activeCap.yRel : 0.82,
+        startX: e.clientX,
+        startY: e.clientY,
+        viewportWidth,
+        viewportHeight
+      };
+      
+      e.preventDefault();
+    }
+  };
+
+  const onMouseMove = (e) => {
+    if (!localIsDragging || !dragConfig) return;
+
+    const currentDeltaX = e.clientX - dragConfig.startX;
+    const currentDeltaY = e.clientY - dragConfig.startY;
+
+    const changeXRel = currentDeltaX / dragConfig.viewportWidth;
+    const changeYRel = currentDeltaY / dragConfig.viewportHeight;
+
+    setCaptions(prevTrackList => prevTrackList.map(item => {
+      if (item.id === dragConfig.captionId) {
+        return {
+          ...item,
+          xRel: Math.max(0.05, Math.min(0.95, dragConfig.initialXRel + changeXRel)),
+          yRel: Math.max(0.10, Math.min(0.98, dragConfig.initialYRel + changeYRel))
+        };
+      }
+      return item;
+    }));
+  };
+
+  const onMouseUp = () => {
+    if (localIsDragging) {
+      localIsDragging = false;
+      dragConfig = null;
+      canvasElement.removeAttribute('data-dragging-active');
+    }
+  };
+
+  canvasElement.addEventListener('mousedown', onMouseDown);
+  window.addEventListener('mousemove', onMouseMove);
+  window.addEventListener('mouseup', onMouseUp);
+
+  return () => {
+    canvasElement.removeEventListener('mousedown', onMouseDown);
+    window.removeEventListener('mousemove', onMouseMove);
+    window.removeEventListener('mouseup', onMouseUp);
+  };
+}, [captions, currentTime]);
+
 
   useEffect(() => {
     return () => {
@@ -237,11 +367,18 @@ export default function App() {
     setCaptions(prev => prev.map(c => c.id === id ? { ...c, [field]: value } : c));
   };
 
-  const handleAddBlock = () => {
-    const last = captions[captions.length - 1];
-    const start = last ? parseFloat((last.end + 0.1).toFixed(1)) : 0;
-    setCaptions([...captions, { id: Date.now().toString(), start, end: start + 2.5, text: "New subtitle line..." }]);
-  };
+const handleAddBlock = () => {
+  const last = captions[captions.length - 1];
+  const start = last ? parseFloat((last.end + 0.1).toFixed(1)) : 0;
+  setCaptions([...captions, { 
+    id: Date.now().toString(), 
+    start, 
+    end: start + 2.5, 
+    text: "New subtitle line...",
+    xRel: 0.5,
+    yRel: 0.82 
+  }]);
+};
 
   const handleDeleteBlock = (id) => {
     setCaptions(prev => prev.filter(c => c.id !== id));
@@ -303,19 +440,7 @@ export default function App() {
 
   function setThemePreset(preset) {
     const updatedStyles = {
-      preset: preset.id, 
-      fontFamily: preset.font, 
-      fontSize: preset.size, 
-      fontWeight: preset.weight, 
-      color: preset.color, 
-      textTransform: preset.trans, 
-      fontStyle: preset.style,
-      strokeColor: preset.strokeColor,
-      strokeWidth: preset.strokeWidth,
-      shadow: preset.shadow,
-      underline: preset.underline,
-      strike: preset.strike,
-      isEditingCustom: false
+      preset: preset.id, fontFamily: preset.font, fontSize: preset.size, fontWeight: preset.weight, color: preset.color, textTransform: preset.trans, fontStyle: preset.style, strokeColor: preset.strokeColor, strokeWidth: preset.strokeWidth, shadow: preset.shadow, underline: preset.underline, strike: preset.strike, isEditingCustom: false
     };
     
     setCaptionStyles(updatedStyles);
@@ -324,18 +449,7 @@ export default function App() {
       return prevCaptions.map(c => {
         if (selectedIds.includes(c.id)) {
           return { 
-            ...c, 
-            fontFamily: preset.font, 
-            fontSize: preset.size, 
-            fontWeight: preset.weight, 
-            color: preset.color, 
-            textTransform: preset.trans, 
-            fontStyle: preset.style,
-            strokeColor: preset.strokeColor,
-            strokeWidth: preset.strokeWidth,
-            shadow: preset.shadow,
-            underline: preset.underline,
-            strike: preset.strike
+            ...c, fontFamily: preset.font, fontSize: preset.size, fontWeight: preset.weight, color: preset.color, textTransform: preset.trans, fontStyle: preset.style, strokeColor: preset.strokeColor, strokeWidth: preset.strokeWidth, shadow: preset.shadow, underline: preset.underline, strike: preset.strike
           };
         }
         return c;
@@ -389,9 +503,7 @@ export default function App() {
     }
 
     const recorder = RecordRTC(combinedStream, {
-      type: 'video',
-      mimeType: 'video/webm',
-      bitsPerSecond: 8000000
+      type: 'video', mimeType: 'video/webm', bitsPerSecond: 8000000
     });
 
     recorder.startRecording();
@@ -471,36 +583,24 @@ export default function App() {
     shadow: currentActiveCaption.shadow !== undefined ? currentActiveCaption.shadow : captionStyles.shadow,
     underline: currentActiveCaption.underline !== undefined ? currentActiveCaption.underline : captionStyles.underline,
     strike: currentActiveCaption.strike !== undefined ? currentActiveCaption.strike : captionStyles.strike,
+    xRel: currentActiveCaption.xRel !== undefined ? currentActiveCaption.xRel : 0.5,
+    yRel: currentActiveCaption.yRel !== undefined ? currentActiveCaption.yRel : 0.82
   } : captionStyles;
 
   return (
     <div className="flex flex-col h-screen bg-zinc-950 text-zinc-100 font-sans select-none overflow-hidden">
-      <WorkspaceHeader 
-        onVideoUpload={handleVideoUpload} 
-        onExport={handleExportVideo}
-        isExporting={isExporting}
-        exportProgress={exportProgress}
-        hasVideo={!!videoSrc}
-      />
+      <WorkspaceHeader onVideoUpload={handleVideoUpload} onExport={handleExportVideo} isExporting={isExporting} exportProgress={exportProgress} hasVideo={!!videoSrc} />
 
       <div className="flex flex-1 overflow-hidden w-full relative">
         <div style={{ width: `${sidebarWidth}px` }} className="shrink-0 h-full overflow-hidden">
-          <TranscriptSidebar 
-            captions={captions} 
-            activeId={activeId} 
-            selectedIds={selectedIds} 
-            onSelectCaption={handleSelectCaption} 
-            onUpdate={handleUpdateCaption} 
-            onAdd={handleAddBlock} 
-            onDelete={handleDeleteBlock} 
-          />
+          <TranscriptSidebar captions={captions} activeId={activeId} selectedIds={selectedIds} onSelectCaption={handleSelectCaption} onUpdate={handleUpdateCaption} onAdd={handleAddBlock} onDelete={handleDeleteBlock} />
         </div>
 
         <div onMouseDown={handleSeparatorMouseDown} className="w-1.5 h-full bg-zinc-900 hover:bg-indigo-500/80 cursor-col-resize shrink-0 z-40" />
 
         <main className="flex-1 flex flex-col bg-zinc-950 overflow-hidden min-w-0">
           <div className="flex-1 grid grid-cols-1 lg:grid-cols-5 p-6 gap-6 min-h-0 relative overflow-hidden">
-            <div className="lg:col-span-4 min-h-0 flex flex-col relative">
+            <div className={`lg:col-span-4 min-h-0 flex flex-col relative ${isDraggingText ? 'cursor-grabbing' : ''}`}>
               <VideoViewport 
                 videoSrc={videoSrc} videoRef={videoRef} previewCanvasRef={previewCanvasRef} isPlaying={isPlaying} currentTime={currentTime} duration={duration} activeCaption={currentActiveCaption} captions={captions} captionStyles={activeViewportStyles} onTogglePlay={handleTogglePlay}
                 onTimeUpdate={() => setCurrentTime(videoRef.current?.currentTime || 0)}
@@ -525,14 +625,9 @@ export default function App() {
 
               {captionStyles.isEditingCustom ? (
                 <div className="space-y-4 text-xs">
-                  {/* Font Family Selection */}
                   <div className="flex flex-col gap-1">
                     <label className="text-zinc-500 font-bold uppercase text-[10px] tracking-wider">Font Style Preset</label>
-                    <select 
-                      value={captionStyles.fontFamily} 
-                      onChange={(e) => handleCustomStyleChange('fontFamily', e.target.value)} 
-                      className="w-full bg-zinc-950 border border-zinc-800 rounded p-1.5 text-zinc-200 focus:outline-none focus:border-indigo-500"
-                    >
+                    <select value={captionStyles.fontFamily} onChange={(e) => handleCustomStyleChange('fontFamily', e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded p-1.5 text-zinc-200 focus:outline-none focus:border-indigo-500">
                       <option value="Impact, Arial Black, sans-serif">Impact (Kinetic Bold)</option>
                       <option value="system-ui, sans-serif">System Sans (Minimal)</option>
                       <option value="'Courier New', Courier, monospace">Courier (Typewriter)</option>
@@ -544,76 +639,32 @@ export default function App() {
                     </select>
                   </div>
 
-                  {/* Font Size Configuration */}
                   <div className="flex flex-col gap-1">
                     <div className="flex justify-between text-[10px] text-zinc-500 font-bold uppercase tracking-wider">
                       <label>Font Size</label>
                       <span>{captionStyles.fontSize}</span>
                     </div>
-                    <input 
-                      type="range" 
-                      min="16" 
-                      max="100" 
-                      step="2"
-                      value={parseInt(captionStyles.fontSize) || 48} 
-                      onChange={(e) => handleCustomStyleChange('fontSize', `${e.target.value}px`)} 
-                      className="w-full h-1 accent-indigo-500 bg-zinc-800 rounded cursor-pointer"
-                    />
+                    <input type="range" min="16" max="100" step="2" value={parseInt(captionStyles.fontSize) || 48} onChange={(e) => handleCustomStyleChange('fontSize', `${e.target.value}px`)} className="w-full h-1 accent-indigo-500 bg-zinc-800 rounded cursor-pointer" />
                   </div>
 
-                  {/* Letter Case Transform Switch */}
                   <div className="flex flex-col gap-1">
                     <label className="text-zinc-500 font-bold uppercase text-[10px] tracking-wider">Case Style</label>
-                    <select 
-                      value={captionStyles.textTransform} 
-                      onChange={(e) => handleCustomStyleChange('textTransform', e.target.value)} 
-                      className="w-full bg-zinc-950 border border-zinc-800 rounded p-1.5 text-zinc-200 focus:outline-none"
-                    >
+                    <select value={captionStyles.textTransform} onChange={(e) => handleCustomStyleChange('textTransform', e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded p-1.5 text-zinc-200 focus:outline-none">
                       <option value="uppercase">UPPERCASE</option>
                       <option value="none">As Written (Standard)</option>
                     </select>
                   </div>
 
-                  {/* Text Decoration Row (Bold / Italic / Underline / Strike) */}
                   <div className="flex flex-col gap-1">
                     <label className="text-zinc-500 font-bold uppercase text-[10px] tracking-wider">Text Modifiers</label>
                     <div className="grid grid-cols-4 gap-1 bg-zinc-950 border border-zinc-800 p-1 rounded-lg text-center">
-                      <button 
-                        type="button"
-                        onClick={() => handleCustomStyleChange('fontWeight', captionStyles.fontWeight === '900' ? '400' : '900')} 
-                        className={`p-2 rounded flex justify-center transition ${captionStyles.fontWeight === '900' ? 'text-indigo-400 bg-indigo-500/10 font-black' : 'text-zinc-500 hover:text-zinc-300'}`}
-                        title="Bold Weight"
-                      >
-                        <Bold className="w-3.5 h-3.5" />
-                      </button>
-                      <button 
-                        type="button"
-                        onClick={() => handleCustomStyleChange('fontStyle', captionStyles.fontStyle === 'italic' ? 'normal' : 'italic')} 
-                        className={`p-2 rounded flex justify-center transition ${captionStyles.fontStyle === 'italic' ? 'text-indigo-400 bg-indigo-500/10' : 'text-zinc-500 hover:text-zinc-300'}`}
-                        title="Italic Slant"
-                      >
-                        <Italic className="w-3.5 h-3.5" />
-                      </button>
-                      <button 
-                        type="button"
-                        onClick={() => handleCustomStyleChange('underline', !captionStyles.underline)} 
-                        className={`p-2 rounded flex justify-center transition ${captionStyles.underline ? 'text-indigo-400 bg-indigo-500/10' : 'text-zinc-500 hover:text-zinc-300'}`}
-                        title="Underline Line"
-                      >
-                        <Underline className="w-3.5 h-3.5" />
-                      </button>
-                      <button 
-                        type="button"
-                        onClick={() => handleCustomStyleChange('strike', !captionStyles.strike)} 
-                        className={`p-2 rounded flex justify-center transition ${captionStyles.strike ? 'text-indigo-400 bg-indigo-500/10' : 'text-zinc-500 hover:text-zinc-300'}`}
-                        title="Strike Through"
-                      >
-                        <Strikethrough className="w-3.5 h-3.5" />
-                      </button>
+                      <button type="button" onClick={() => handleCustomStyleChange('fontWeight', captionStyles.fontWeight === '900' ? '400' : '900')} className={`p-2 rounded flex justify-center transition ${captionStyles.fontWeight === '900' ? 'text-indigo-400 bg-indigo-500/10 font-black' : 'text-zinc-500 hover:text-zinc-300'}`} title="Bold Weight"><Bold className="w-3.5 h-3.5" /></button>
+                      <button type="button" onClick={() => handleCustomStyleChange('fontStyle', captionStyles.fontStyle === 'italic' ? 'normal' : 'italic')} className={`p-2 rounded flex justify-center transition ${captionStyles.fontStyle === 'italic' ? 'text-indigo-400 bg-indigo-500/10' : 'text-zinc-500 hover:text-zinc-300'}`} title="Italic Slant"><Italic className="w-3.5 h-3.5" /></button>
+                      <button type="button" onClick={() => handleCustomStyleChange('underline', !captionStyles.underline)} className={`p-2 rounded flex justify-center transition ${captionStyles.underline ? 'text-indigo-400 bg-indigo-500/10' : 'text-zinc-500 hover:text-zinc-300'}`} title="Underline Line"><Underline className="w-3.5 h-3.5" /></button>
+                      <button type="button" onClick={() => handleCustomStyleChange('strike', !captionStyles.strike)} className={`p-2 rounded flex justify-center transition ${captionStyles.strike ? 'text-indigo-400 bg-indigo-500/10' : 'text-zinc-500 hover:text-zinc-300'}`} title="Strike Through"><Strikethrough className="w-3.5 h-3.5" /></button>
                     </div>
                   </div>
 
-                  {/* Dual Station Colors (Fill and Border Stroke) */}
                   <div className="grid grid-cols-2 gap-2">
                     <div className="flex flex-col gap-1">
                       <label className="text-zinc-500 font-bold uppercase text-[10px] tracking-wider">Text Color</label>
@@ -631,49 +682,23 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Outliner Border Weight Slider */}
                   <div className="flex flex-col gap-1">
                     <div className="flex justify-between text-[10px] text-zinc-500 font-bold uppercase tracking-wider">
                       <label>Outline Width</label>
                       <span>{Math.round((captionStyles.strokeWidth !== undefined ? captionStyles.strokeWidth : 0.14) * 100)}%</span>
                     </div>
-                    <input 
-                      type="range" 
-                      min="0" 
-                      max="0.30" 
-                      step="0.02"
-                      value={captionStyles.strokeWidth !== undefined ? captionStyles.strokeWidth : 0.14} 
-                      onChange={(e) => handleCustomStyleChange('strokeWidth', parseFloat(e.target.value))} 
-                      className="w-full h-1 accent-indigo-500 bg-zinc-800 rounded cursor-pointer"
-                    />
+                    <input type="range" min="0" max="0.30" step="0.02" value={captionStyles.strokeWidth !== undefined ? captionStyles.strokeWidth : 0.14} onChange={(e) => handleCustomStyleChange('strokeWidth', parseFloat(e.target.value))} className="w-full h-1 accent-indigo-500 bg-zinc-800 rounded cursor-pointer" />
                   </div>
 
-                  {/* Drop Shadow Flag */}
                   <div className="flex items-center justify-between p-2.5 bg-zinc-950 border border-zinc-800 rounded-lg">
-                    <label className="text-zinc-400 font-bold uppercase text-[10px] tracking-wider cursor-pointer select-none" htmlFor="shadowToggle">
-                      Enable Shadow Drop
-                    </label>
-                    <input 
-                      id="shadowToggle"
-                      type="checkbox" 
-                      checked={!!captionStyles.shadow}
-                      onChange={(e) => handleCustomStyleChange('shadow', e.target.checked)}
-                      className="w-4 h-4 accent-indigo-500 cursor-pointer bg-zinc-900 border-zinc-800 rounded focus:ring-0"
-                    />
+                    <label className="text-zinc-400 font-bold uppercase text-[10px] tracking-wider cursor-pointer select-none" htmlFor="shadowToggle">Enable Shadow Drop</label>
+                    <input id="shadowToggle" type="checkbox" checked={!!captionStyles.shadow} onChange={(e) => handleCustomStyleChange('shadow', e.target.checked)} className="w-4 h-4 accent-indigo-500 cursor-pointer bg-zinc-900 border-zinc-800 rounded focus:ring-0" />
                   </div>
                 </div>
               ) : (
                 <div className="space-y-2">
                   {STYLE_PRESETS.map(p => (
-                    <button 
-                      key={p.id} 
-                      onClick={() => setThemePreset(p)} 
-                      className={`w-full text-left p-3 rounded-xl border text-xs font-medium transition duration-150 ${
-                        captionStyles.preset === p.id 
-                          ? 'bg-indigo-600/10 border-indigo-500 text-white shadow-md' 
-                          : 'bg-zinc-900/40 border-zinc-800 text-zinc-400 hover:border-zinc-700'
-                      }`}
-                    >
+                    <button key={p.id} onClick={() => setThemePreset(p)} className={`w-full text-left p-3 rounded-xl border text-xs font-medium transition duration-150 ${captionStyles.preset === p.id ? 'bg-indigo-600/10 border-indigo-500 text-white shadow-md' : 'bg-zinc-900/40 border-zinc-800 text-zinc-400 hover:border-zinc-700'}`}>
                       {p.name}
                     </button>
                   ))}
@@ -683,16 +708,7 @@ export default function App() {
           </div>
 
           <div style={{ height: isTimelineOpen ? '220px' : '0px' }} className="shrink-0 w-full bg-zinc-900 overflow-hidden transition-[height] duration-200">
-            <TimelineTrack 
-              videoSrc={videoSrc} 
-              captions={captions} 
-              currentTime={currentTime} 
-              duration={duration} 
-              activeId={activeId} 
-              selectedIds={selectedIds}          
-              onSelectCaption={handleSelectCaption} 
-              onSeek={handleTimelineSeek} 
-            />       
+            <TimelineTrack videoSrc={videoSrc} captions={captions} currentTime={currentTime} duration={duration} activeId={activeId} selectedIds={selectedIds} onSelectCaption={handleSelectCaption} onSeek={handleTimelineSeek} />       
           </div>
         </main>
       </div>
