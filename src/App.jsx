@@ -790,14 +790,14 @@ const handleExportVideo = async () => {
 
                   <div className="grid grid-cols-2 gap-2">
                     <div className="flex flex-col gap-1">
-                      <label className="text-zinc-500 font-bold uppercase text-[10px] tracking-wider">Text Color</label>
+                      <label className="text-zinc-500 font-bold uppercase text-[10px] tracking-wider">Text</label>
                       <div className="flex items-center bg-zinc-950 border border-zinc-800 rounded p-1">
                         <input type="color" value={captionStyles.color} onChange={(e) => handleCustomStyleChange('color', e.target.value)} className="w-6 h-6 bg-transparent border-0 cursor-pointer rounded" />
                         <span className="ml-1.5 font-mono text-[10px] text-zinc-400 uppercase">{captionStyles.color}</span>
                       </div>
                     </div>
                     <div className="flex flex-col gap-1">
-                      <label className="text-zinc-500 font-bold uppercase text-[10px] tracking-wider">Stroke Color</label>
+                      <label className="text-zinc-500 font-bold uppercase text-[10px] tracking-wider">Stroke</label>
                       <div className="flex items-center bg-zinc-950 border border-zinc-800 rounded p-1">
                         <input type="color" value={captionStyles.strokeColor || '#000000'} onChange={(e) => handleCustomStyleChange('strokeColor', e.target.value)} className="w-6 h-6 bg-transparent border-0 cursor-pointer rounded" />
                         <span className="ml-1.5 font-mono text-[10px] text-zinc-400 uppercase">{captionStyles.strokeColor || '#000000'}</span>
