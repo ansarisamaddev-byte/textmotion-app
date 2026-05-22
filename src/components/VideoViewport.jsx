@@ -9,13 +9,12 @@ export default function VideoViewport({
   currentTime, 
   duration, 
   activeCaption,    
-  captions, // Added to pass entire tracking array down to renderCaptionFrame
+  captions, 
   captionStyles,    
   onTogglePlay, 
   onTimeUpdate, 
   onLoadedMetadata 
 }) {
-  // Pan and Zoom Tracking Vectors
   const [zoomScale, setZoomScale] = useState(100);
   const [panPosition, setPanPosition] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
@@ -40,7 +39,6 @@ export default function VideoViewport({
     videoRef.current.currentTime = newTime;
   };
 
-  // --- Pan Execution Flow (Drag and Drop Frame Logic) ---
   const handleMouseDown = (e) => {
     if (zoomScale <= 100 || !videoSrc) return;
     setIsDragging(true);
@@ -71,48 +69,56 @@ export default function VideoViewport({
     return () => window.removeEventListener('mouseup', handleMouseUp);
   }, [isDragging]);
 
-  // 🔥 CORE INTEGRATION: Continuous canvas updates synchronized with video frame loops
-  useEffect(() => {
-    const video = videoRef.current;
-    const canvas = previewCanvasRef.current;
-    if (!video || !canvas || !videoSrc) return;
+// 🔥 FIXED: Bulletproof Canvas Frame Synchronization Loop
+useEffect(() => {
+  const video = videoRef.current;
+  const canvas = previewCanvasRef.current;
+  if (!video || !canvas || !videoSrc) return;
 
-    const ctx = canvas.getContext('2d');
-    let frameId = null;
+  const ctx = canvas.getContext('2d');
+  let frameId = null;
 
-    const syncCanvasDimensionsAndDraw = () => {
-      // Synchronize internal canvas grid size with native properties
-      if (video.videoWidth && (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight)) {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-      }
-      // Call shared global rendering pipeline function
-      renderCaptionFrame(ctx, canvas, video, captions || [], captionStyles);
-    };
-
-    const loop = () => {
-      syncCanvasDimensionsAndDraw();
-      if (!video.paused && !video.ended) {
-        frameId = requestAnimationFrame(loop);
-      }
-    };
-
-    if (isPlaying) {
-      frameId = requestAnimationFrame(loop);
-    } else {
-      // Force instant calculation on manual seek shifts or pausing states
-      syncCanvasDimensionsAndDraw();
+  const syncCanvasAndDraw = (shouldClear = false) => {
+    // 1. Align resolution grids cleanly
+    if (video.videoWidth && (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight)) {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
     }
 
-    return () => {
-      if (frameId) cancelAnimationFrame(frameId);
-    };
+    // 2. Only clear when explicitly requested (during active playback loops)
+    if (shouldClear) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+
+    // 3. Paint both video and subtitle matrix strings
+    renderCaptionFrame(ctx, canvas, video, captions || [], captionStyles);
+  };
+
+  const playbackLoop = () => {
+    // Clear is safe here because frames are streaming constantly at 60Hz
+    syncCanvasAndDraw(true); 
+    if (!video.paused && !video.ended) {
+      frameId = requestAnimationFrame(playbackLoop);
+    }
+  };
+
+  if (isPlaying) {
+    frameId = requestAnimationFrame(playbackLoop);
+  } else {
+    // 🔥 THE FIX: Draw instantly WITHOUT clearing the canvas first.
+    // This safely preserves the last rendered video frame image array perfectly.
+    syncCanvasAndDraw(false);
+  }
+
+  return () => {
+    if (frameId) cancelAnimationFrame(frameId);
+  };
 }, [isPlaying, currentTime, captions, captionStyles, videoSrc, videoRef]);
 
   return (
     <div className="relative flex-1 bg-zinc-900/40 border border-zinc-800/60 rounded-2xl overflow-hidden flex flex-col justify-between p-3 h-full min-h-0 select-none backdrop-blur-sm">
       
-      {/* 1. Main Monitoring Deck */}
+      {/* Main Monitoring Deck */}
       <div 
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
@@ -120,7 +126,6 @@ export default function VideoViewport({
           zoomScale > 100 && videoSrc ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
         }`}
       >
-        {/* Placeholder Screen */}
         {!videoSrc && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-zinc-500 font-mono text-xs z-10 bg-zinc-950">
             <span className="p-2.5 bg-zinc-900 rounded-xl border border-zinc-800 text-base">🎬</span>
@@ -128,7 +133,6 @@ export default function VideoViewport({
           </div>
         )}
 
-        {/* Hidden underlying native video element layout source */}
         <video
           ref={videoRef}
           src={videoSrc || undefined}
@@ -139,7 +143,6 @@ export default function VideoViewport({
           crossOrigin="anonymous"
         />
 
-        {/* Unified Canvas Stage Wrapper */}
         <div 
           style={{ 
             transform: `translate(${panPosition.x}px, ${panPosition.y}px) scale(${zoomScale / 100})`,
@@ -148,7 +151,6 @@ export default function VideoViewport({
           }}
           className="relative max-h-full max-w-full w-full h-full items-center justify-center transition-transform duration-75 ease-out"
         >
-          {/* 🔥 UNIFIED CANVAS PREVIEW SURFACE */}
           <canvas
             ref={previewCanvasRef}
             onClick={(e) => {
@@ -159,7 +161,6 @@ export default function VideoViewport({
           />
         </div>
 
-        {/* Floating Reset View Indicator Alert */}
         {zoomScale > 100 && videoSrc && (
           <button 
             onClick={handleResetView}
@@ -170,10 +171,8 @@ export default function VideoViewport({
         )}
       </div>
 
-      {/* 2. Transport Control Deck Area */}
+      {/* Transport Control Deck Area */}
       <div className="flex flex-col gap-2.5 mt-3 pt-2 border-t border-zinc-900 shrink-0">
-        
-        {/* Scrub Track timeline bar */}
         <div 
           onClick={handleProgressBarClick}
           className="w-full h-1 bg-zinc-800 hover:h-1.5 rounded-full cursor-pointer relative group transition-all duration-150"
@@ -186,7 +185,6 @@ export default function VideoViewport({
           </div>
         </div>
 
-        {/* Controls Layout Toolbar */}
         <div className="flex items-center justify-between w-full gap-4">
           <div className="flex items-center gap-3">
             <button
@@ -208,7 +206,6 @@ export default function VideoViewport({
             </div>
           </div>
 
-          {/* Dynamic Slider Console Panel */}
           <div className="flex items-center gap-2 bg-zinc-950 border border-zinc-900 px-2 py-1 rounded-lg shrink-0">
             {zoomScale > 100 ? <Move className="w-3 h-3 text-indigo-400" /> : <ZoomIn className="w-3 h-3 text-zinc-500" />}
             <input 
@@ -238,7 +235,6 @@ export default function VideoViewport({
             </button>
           </div>
         </div>
-
       </div>
 
     </div>

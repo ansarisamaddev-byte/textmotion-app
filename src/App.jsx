@@ -31,61 +31,66 @@ export const renderCaptionFrame = (ctx, canvas, videoElement, captions, captionS
   const timestamp = videoElement.currentTime;
   const activeCap = captions.find(c => timestamp >= c.start && timestamp <= c.end);
 
-  if (activeCap) {
-    ctx.save();
-    
-    // Parse baseline fonts precisely
-    const baseSize = parseInt(activeCap.fontSize || captionStyles.fontSize) || 48;
-    const fontName = (activeCap.fontFamily || captionStyles.fontFamily).split(',')[0].replace(/['"]/g, '').trim();
-    const isItalic = (activeCap.fontStyle || captionStyles.fontStyle) === 'italic' ? 'italic ' : '';
-    const fontWeight = activeCap.fontWeight || captionStyles.fontWeight || '900';
-    
-    // Explicit system lookup layout execution pass
-    ctx.font = `${isItalic}${fontWeight} ${baseSize}px "${fontName}"`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'bottom';
-    ctx.fillStyle = activeCap.color || captionStyles.color || '#fbbf24';
-    
-    // High-impact outline configuration matching premium short forms
-    ctx.strokeStyle = '#000000';
-    ctx.lineWidth = Math.max(4, baseSize * 0.14);
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
+ // 🔥 FIXED SYNTAX: Update this exact block inside renderCaptionFrame in App.jsx
+if (activeCap) {
+  ctx.save();
+  
+  // Read properties directly from the active sub-item capsule first to preserve custom individual block selections
+  const targetFontFamily = activeCap.fontFamily || captionStyles.fontFamily || 'Impact, Arial Black, sans-serif';
+  const targetFontSize = activeCap.fontSize || captionStyles.fontSize || '48px';
+  const targetFontWeight = activeCap.fontWeight || captionStyles.fontWeight || '900';
+  const targetFontStyle = activeCap.fontStyle || captionStyles.fontStyle || 'normal';
+  const targetColor = activeCap.color || captionStyles.color || '#fbbf24';
+  const targetTransform = activeCap.textTransform || captionStyles.textTransform || 'uppercase';
 
-    const rawText = (activeCap.textTransform || captionStyles.textTransform) === 'uppercase' 
-      ? activeCap.text.toUpperCase() 
-      : activeCap.text;
-
-    // Word Wrap Helper Engine
-    const words = rawText.split(/\s+/);
-    const lines = [];
-    const maxTextWidth = canvas.width * 0.85; // Secure 85% layout width boundary
-    let currentLine = words[0] || '';
-
-    for (let i = 1; i < words.length; i++) {
-      const testLine = currentLine + ' ' + words[i];
-      if (ctx.measureText(testLine).width > maxTextWidth) {
-        lines.push(currentLine);
-        currentLine = words[i];
-      } else {
-        currentLine = testLine;
-      }
-    }
-    lines.push(currentLine);
-
-    const xPos = canvas.width / 2;
-    let initialYPos = canvas.height * 0.85; // Ground position inside lower third
-    const lineSpacingOffset = baseSize * 1.15;
-
-    // Stack lines cleanly upward
-    for (let j = lines.length - 1; j >= 0; j--) {
-      ctx.strokeText(lines[j], xPos, initialYPos);
-      ctx.fillText(lines[j], xPos, initialYPos);
-      initialYPos -= lineSpacingOffset;
-    }
-
-    ctx.restore();
+  let fontName = targetFontFamily.split(',')[0].replace(/['"]/g, '').trim();
+  if (fontName.includes(' ')) {
+    fontName = `"${fontName}"`;
   }
+  
+  const baseSize = parseInt(targetFontSize) || 48;
+  const isItalic = targetFontStyle === 'italic' ? 'italic ' : '';
+  
+  ctx.font = `${isItalic}${targetFontWeight} ${baseSize}px ${fontName}`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'bottom';
+  ctx.fillStyle = targetColor;
+  
+  ctx.strokeStyle = '#000000';
+  ctx.lineWidth = Math.max(4, baseSize * 0.14);
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+
+  const rawText = targetTransform === 'uppercase' ? activeCap.text.toUpperCase() : activeCap.text;
+
+  const words = rawText.split(/\s+/);
+  const lines = [];
+  const maxTextWidth = canvas.width * 0.85;
+  let currentLine = words[0] || '';
+
+  for (let i = 1; i < words.length; i++) {
+    const testLine = currentLine + ' ' + words[i];
+    if (ctx.measureText(testLine).width > maxTextWidth) {
+      lines.push(currentLine);
+      currentLine = words[i];
+    } else {
+      currentLine = testLine;
+    }
+  }
+  lines.push(currentLine);
+
+  const xPos = canvas.width / 2;
+  let initialYPos = canvas.height * 0.85; 
+  const lineSpacingOffset = baseSize * 1.15;
+
+  for (let j = lines.length - 1; j >= 0; j--) {
+    ctx.strokeText(lines[j], xPos, initialYPos);
+    ctx.fillText(lines[j], xPos, initialYPos);
+    initialYPos -= lineSpacingOffset;
+  }
+
+  ctx.restore();
+}
 };
 
 export default function App() {
@@ -187,128 +192,210 @@ export default function App() {
     document.addEventListener('mouseup', handleMouseUp);
   };
 
-  const handleSelectCaption = (id, event) => {
-    setSelectedIds([id]);
-    setActiveId(id);
-    const targeted = captions.find(c => c.id === id);
-    if (targeted) {
-      setCaptionStyles(prev => ({
-        ...prev,
-        fontFamily: targeted.fontFamily || 'Impact, Arial Black, sans-serif',
-        fontSize: targeted.fontSize || '48px',
-        fontWeight: targeted.fontWeight || '900',
-        fontStyle: targeted.fontStyle || 'normal',
-        color: targeted.color || '#fbbf24',
-        textTransform: targeted.textTransform || 'uppercase',
-      }));
-    }
-  };
+ // Inside App.jsx
 
-  const handleCustomStyleChange = (field, value) => {
-    setCaptionStyles(prev => ({ ...prev, preset: 'custom', [field]: value }));
-    if (selectedIds.length > 0) {
-      setCaptions(prev => prev.map(c => selectedIds.includes(c.id) ? { ...c, [field]: value } : c));
-    }
-  };
-
-  function setThemePreset(preset) {
-    setCaptionStyles(prev => ({
-      ...prev,
-      preset: preset.id, fontFamily: preset.font, fontSize: preset.size, fontWeight: preset.weight, color: preset.color, textTransform: preset.trans, fontStyle: preset.style
-    }));
-    if (selectedIds.length > 0) {
-      setCaptions(prev => prev.map(c => selectedIds.includes(c.id) ? { ...c, fontFamily: preset.font, fontSize: preset.size, fontWeight: preset.weight, color: preset.color, textTransform: preset.trans, fontStyle: preset.style } : c));
-    }
+// Unified selection engine handler for both panels
+const handleSelectCaption = (id) => {
+  // 1. Mark as globally selected for style sheet tools
+  setSelectedIds([id]);
+  
+  // 2. Set as actively highlighted tracking ID
+  setActiveId(id);
+  
+  // 3. Find the block to instantly snap the video timeline to its start marker
+  const targeted = captions.find(c => c.id === id);
+  if (targeted && videoRef.current) {
+    videoRef.current.currentTime = targeted.start;
+    setCurrentTime(targeted.start); // Forces immediate viewport canvas frame refresh
   }
 
-  // 🔥 THE MANDATORY FIXED EXPORT: Executes the exact core frame render code
-  const handleExportVideo = async () => {
-    if (!videoSrc || !videoRef.current) return;
+  // 4. Load its unique styles into the editor sidebar panel deck
+  if (targeted) {
+    setCaptionStyles(prev => ({
+      ...prev,
+      fontFamily: targeted.fontFamily || 'Impact, Arial Black, sans-serif',
+      fontSize: targeted.fontSize || '48px',
+      fontWeight: targeted.fontWeight || '900',
+      fontStyle: targeted.fontStyle || 'normal',
+      color: targeted.color || '#fbbf24',
+      textTransform: targeted.textTransform || 'uppercase',
+    }));
+  }
+};
 
-    setIsExporting(true);
-    setExportProgress(0);
+const handleCustomStyleChange = (field, value) => {
+  setCaptionStyles(prev => ({ ...prev, preset: 'custom', [field]: value }));
+  
+  // Instantly force state alignment engine push to the selected caption item block
+  if (selectedIds.length > 0) {
+    setCaptions(prevCaptions => 
+      prevCaptions.map(c => 
+        selectedIds.includes(c.id) ? { ...c, [field]: value } : c
+      )
+    );
+  }
+};
 
-    const mainVideo = videoRef.current;
-    const nativeWidth = mainVideo.videoWidth || 1080;
-    const nativeHeight = mainVideo.videoHeight || 1920;
-
-    const originalTime = mainVideo.currentTime;
-    const originalMuted = mainVideo.muted;
-
-    mainVideo.pause();
-    mainVideo.currentTime = 0;
-    mainVideo.muted = true;
-
-    const exportCanvas = document.createElement('canvas');
-    exportCanvas.width = nativeWidth;
-    exportCanvas.height = nativeHeight;
-    const exportCtx = exportCanvas.getContext('2d');
-
-    const stream = exportCanvas.captureStream(30);
-    const recorder = RecordRTC(stream, {
-      type: 'video',
-      mimeType: 'video/webm',
-      bitsPerSecond: 8000000
-    });
-
-    recorder.startRecording();
-    let animId = null;
-
-    const processFrame = () => {
-      if (!mainVideo || mainVideo.paused || mainVideo.ended) return;
-
-      // CALLS THE EXACT SAME LOGIC FUNCTION AS PREVIEW
-      renderCaptionFrame(exportCtx, exportCanvas, mainVideo, captions, captionStyles);
-
-      const progress = Math.min(99, Math.floor((mainVideo.currentTime / duration) * 100));
-      setExportProgress(progress);
-
-      if (mainVideo.currentTime < duration && !mainVideo.ended) {
-        animId = requestAnimationFrame(processFrame);
+  function setThemePreset(preset) {
+  // 1. Immediately update global fallback baseline configurations
+  const updatedStyles = {
+    preset: preset.id, 
+    fontFamily: preset.font, 
+    fontSize: preset.size, 
+    fontWeight: preset.weight, 
+    color: preset.color, 
+    textTransform: preset.trans, 
+    fontStyle: preset.style,
+    isEditingCustom: false
+  };
+  
+  setCaptionStyles(updatedStyles);
+  
+  // 2. 🔥 CRITICAL FIX: Explicitly map and replace tracking properties on the selected target object
+  setCaptions(prevCaptions => {
+    return prevCaptions.map(c => {
+      if (selectedIds.includes(c.id)) {
+        return { 
+          ...c, 
+          fontFamily: preset.font, 
+          fontSize: preset.size, 
+          fontWeight: preset.weight, 
+          color: preset.color, 
+          textTransform: preset.trans, 
+          fontStyle: preset.style 
+        };
       }
-    };
+      return c;
+    });
+  });
+}
 
-    setTimeout(() => {
-      mainVideo.play().then(() => {
-        animId = requestAnimationFrame(processFrame);
-      }).catch(err => {
-        console.error("Export frame capture engine error:", err);
-        setIsExporting(false);
-      });
-    }, 150);
+  // 🔥 THE MANDATORY FIXED EXPORT: Executes the exact core frame render code
+const handleExportVideo = async () => {
+  if (!videoSrc || !videoRef.current) return;
 
-    const finalizeVideo = () => {
-      if (animId) cancelAnimationFrame(animId);
-      clearInterval(safetyInterval);
+  setIsExporting(true);
+  setExportProgress(0);
 
-      recorder.stopRecording(() => {
-        setExportProgress(100);
-        const blob = recorder.getBlob();
-        const url = URL.createObjectURL(blob);
+  const mainVideo = videoRef.current;
+  const nativeWidth = mainVideo.videoWidth || 1080;
+  const nativeHeight = mainVideo.videoHeight || 1920;
 
-        const anchor = document.createElement('a');
-        anchor.href = url;
-        anchor.download = `textmotion-render-${Date.now()}.webm`;
-        document.body.appendChild(anchor);
-        anchor.click();
+  const originalTime = mainVideo.currentTime;
+  const originalMuted = mainVideo.muted;
 
-        document.body.removeChild(anchor);
-        URL.revokeObjectURL(url);
+  mainVideo.pause();
+  mainVideo.currentTime = 0;
+  
+  // 🔥 CRITICAL: Unmute the video so the Web Audio API can capture the stream
+  mainVideo.muted = false; 
 
-        mainVideo.pause();
-        mainVideo.currentTime = originalTime;
-        mainVideo.muted = originalMuted;
-        setIsPlaying(false);
-        setIsExporting(false);
-      });
-    };
+  const exportCanvas = document.createElement('canvas');
+  exportCanvas.width = nativeWidth;
+  exportCanvas.height = nativeHeight;
+  const exportCtx = exportCanvas.getContext('2d');
 
-    mainVideo.addEventListener('ended', finalizeVideo);
-    const safetyInterval = setInterval(() => {
-      if (mainVideo.currentTime >= duration || mainVideo.ended) finalizeVideo();
-    }, 100);
+  // 1. Capture the raw visual pixel stream from canvas matrix
+  const videoStream = exportCanvas.captureStream(30);
+
+  // 2. Extract and link audio using Web Audio API pipeline
+  let combinedStream = videoStream;
+  let audioContext = null;
+  let audioSource = null;
+  let audioDestination = null;
+
+  try {
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    audioSource = audioContext.createMediaElementSource(mainVideo);
+    audioDestination = audioContext.createMediaStreamDestination();
+    
+    // Connect audio source to the recording destination path
+    audioSource.connect(audioDestination);
+    
+    // Connect audio source to master speakers so system components don't freeze
+    audioSource.connect(audioContext.destination);
+
+    // Combine visual canvas channels and raw audio tracks into a unified stream payload
+    const audioTrack = audioDestination.stream.getAudioTracks()[0];
+    if (audioTrack) {
+      videoStream.addTrack(audioTrack);
+      combinedStream = videoStream;
+    }
+  } catch (audioErr) {
+    console.warn("Web Audio Routing notice (Context might already be active):", audioErr);
+  }
+
+  // 3. Initialize Recorder with combined AV Stream
+  const recorder = RecordRTC(combinedStream, {
+    type: 'video',
+    mimeType: 'video/webm',
+    bitsPerSecond: 8000000
+  });
+
+  recorder.startRecording();
+  let animId = null;
+
+  const processFrame = () => {
+    if (!mainVideo || mainVideo.paused || mainVideo.ended) return;
+
+    renderCaptionFrame(exportCtx, exportCanvas, mainVideo, captions, captionStyles);
+
+    const progress = Math.min(99, Math.floor((mainVideo.currentTime / duration) * 100));
+    setExportProgress(progress);
+
+    if (mainVideo.currentTime < duration && !mainVideo.ended) {
+      animId = requestAnimationFrame(processFrame);
+    }
   };
 
+  setTimeout(() => {
+    mainVideo.play().then(() => {
+      animId = requestAnimationFrame(processFrame);
+    }).catch(err => {
+      console.error("Export frame capture engine error:", err);
+      setIsExporting(false);
+    });
+  }, 150);
+
+  const finalizeVideo = () => {
+    if (animId) cancelAnimationFrame(animId);
+    clearInterval(safetyInterval);
+
+    recorder.stopRecording(() => {
+      setExportProgress(100);
+      const blob = recorder.getBlob();
+      const url = URL.createObjectURL(blob);
+
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `textmotion-render-${Date.now()}.webm`;
+      document.body.appendChild(anchor);
+      anchor.click();
+
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(url);
+
+      // Clean up Web Audio graph bindings completely to prevent memory leaks
+      if (audioContext) {
+        audioSource.disconnect();
+        audioDestination.disconnect();
+        audioContext.close();
+      }
+
+      mainVideo.pause();
+      mainVideo.currentTime = originalTime;
+      mainVideo.muted = originalMuted;
+      setIsPlaying(false);
+      setIsExporting(false);
+    });
+  };
+
+  const safetyInterval = setInterval(() => {
+    if (mainVideo.currentTime >= duration || mainVideo.ended) {
+      finalizeVideo();
+    }
+  }, 100);
+};
   const currentActiveCaption = captions.find(c => c.id === activeId);
   const activeViewportStyles = currentActiveCaption ? {
     fontFamily: currentActiveCaption.fontFamily || captionStyles.fontFamily,
@@ -331,8 +418,16 @@ export default function App() {
       />
 
       <div className="flex flex-1 overflow-hidden w-full relative">
-        <div style={{ width: `${sidebarWidth}px` }} className="shrink-0 h-full overflow-hidden">
-          <TranscriptSidebar captions={captions} activeId={activeId} selectedIds={selectedIds} onSelectCaption={handleSelectCaption} onUpdate={handleUpdateCaption} onAdd={handleAddBlock} onDelete={handleDeleteBlock} />
+        <div style={{ width: `${sidebarWidth}px` }} className="shrink-0 h-full overflow-hidden">{/* In your App.jsx layout tree return statement */}
+<TranscriptSidebar 
+  captions={captions} 
+  activeId={activeId} 
+  selectedIds={selectedIds} 
+  onSelectCaption={handleSelectCaption} // <-- Pass here
+  onUpdate={handleUpdateCaption} 
+  onAdd={handleAddBlock} 
+  onDelete={handleDeleteBlock} 
+/>
         </div>
 
         <div onMouseDown={handleSeparatorMouseDown} className="w-1.5 h-full bg-zinc-900 hover:bg-indigo-500/80 cursor-col-resize shrink-0 z-40" />
@@ -381,8 +476,16 @@ export default function App() {
           </div>
 
           <div style={{ height: isTimelineOpen ? '220px' : '0px' }} className="shrink-0 w-full bg-zinc-900 overflow-hidden transition-[height] duration-200">
-            <TimelineTrack videoSrc={videoSrc} captions={captions} currentTime={currentTime} duration={duration} activeId={activeId} onSeek={handleTimelineSeek} />
-          </div>
+   <TimelineTrack 
+  videoSrc={videoSrc} 
+  captions={captions} 
+  currentTime={currentTime} 
+  duration={duration} 
+  activeId={activeId} 
+  selectedIds={selectedIds}          // <-- Pass down selection array
+  onSelectCaption={handleSelectCaption} // <-- Pass down selection trigger
+  onSeek={handleTimelineSeek} 
+/>       </div>
         </main>
       </div>
     </div>

@@ -36,7 +36,7 @@ useEffect(() => {
     setIsLoading(true);
     console.log("Triggering API Fetch Request to Beeceptor..."); // This will now print!
     try {
-      const response = await fetch('https://textmotion-test.free.beeceptor.com/v1/captions');
+      const response = await fetch('https://caption-data-webhook.free.beeceptor.com/v1/captions');
       const data = await response.json();
       console.log("Fetched webhook data:", data);
       
