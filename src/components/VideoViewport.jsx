@@ -15,10 +15,16 @@ export default function VideoViewport({
   onTimeUpdate, 
   onLoadedMetadata,
   previewCanvasRef, 
+  
+  // Lifted Global View State Pointers
+  zoomScale,      // Controlled externally (e.g., 100 to 400)
+  translateX,     // Controlled externally (panning X offset)
+  translateY,     // Controlled externally (panning Y offset)
+  onZoomChange,   // State setter function passed from App.jsx
+  onPanChange,    // State setter function passed from App.jsx
+  handleResetView,
   setCaptions       
 }) {
-  const [zoomScale, setZoomScale] = useState(100);
-  const [panPosition, setPanPosition] = useState({ x: 0, y: 0 });
   const [isViewportDragging, setIsViewportDragging] = useState(false);
   
   const viewportDragStart = useRef({ x: 0, y: 0 });
@@ -32,12 +38,11 @@ export default function VideoViewport({
   // --- KEYBOARD SPACEBAR LISTENERS ---
   useEffect(() => {
     const handleKeyDown = (e) => {
-      // Avoid triggering when user typing inside input boxes or textareas
       if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA') {
         return;
       }
       if (e.code === 'Space') {
-        e.preventDefault(); // Stop page scrolling downwards
+        e.preventDefault(); 
         if (videoSrc) onTogglePlay();
       }
     };
@@ -83,7 +88,6 @@ export default function VideoViewport({
       const { canvasX, canvasY, viewportWidth, viewportHeight } = getCanvasRelativeCoords(e.clientX, e.clientY, canvas);
       const box = activeCap._metaBoundingBox;
 
-      // Click accuracy checking window
       const isWithinX = canvasX >= (box.centerX - (box.width / 2) - 60) && canvasX <= (box.centerX + (box.width / 2) + 60);
       const isWithinY = canvasY >= (box.topY - 60) && canvasY <= (box.bottomY + 60);
 
@@ -107,9 +111,10 @@ export default function VideoViewport({
       }
     }
 
+    // Panning framework triggered if zoom scale exceeds baseline parameters
     if (zoomScale > 100) {
       setIsViewportDragging(true);
-      viewportDragStart.current = { x: e.clientX - panPosition.x, y: e.clientY - panPosition.y };
+      viewportDragStart.current = { x: e.clientX - translateX, y: e.clientY - translateY };
       window.addEventListener('mousemove', handleGlobalMouseMove, { passive: true });
       window.addEventListener('mouseup', handleGlobalMouseUp);
     }
@@ -128,7 +133,6 @@ export default function VideoViewport({
       const changeXRel = currentDeltaX / config.viewportWidth;
       const changeYRel = currentDeltaY / config.viewportHeight;
 
-      // Update in-memory positions instantly
       const calculatedX = Math.max(0.01, Math.min(0.99, config.initialXRel + changeXRel));
       const calculatedY = Math.max(0.01, Math.min(0.99, config.initialYRel + changeYRel));
 
@@ -138,15 +142,15 @@ export default function VideoViewport({
         activeCap.yRel = calculatedY;
       }
 
-      // Render instantly on the underlying Canvas node directly bypassing layout passes
       const ctx = canvas.getContext('2d');
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       renderCaptionFrame(ctx, canvas, video, captionsRef.current || [], captionStyles);
     } else if (isViewportDragging) {
-      setPanPosition({
-        x: e.clientX - viewportDragStart.current.x,
-        y: e.clientY - viewportDragStart.current.y
-      });
+      // Emit spatial adjustments upward to App.jsx global tracking metrics
+      onPanChange(
+        e.clientX - viewportDragStart.current.x,
+        e.clientY - viewportDragStart.current.y
+      );
     }
   };
 
@@ -166,7 +170,6 @@ export default function VideoViewport({
       const calculatedX = Math.max(0.01, Math.min(0.99, config.initialXRel + changeXRel));
       const calculatedY = Math.max(0.01, Math.min(0.99, config.initialYRel + changeYRel));
 
-      // Single state sync update executed only on user release drop sequence
       setCaptions(prevTrackList => prevTrackList.map(item => {
         if (item.id === config.captionId) {
           return { ...item, xRel: calculatedX, yRel: calculatedY };
@@ -179,7 +182,7 @@ export default function VideoViewport({
     setIsViewportDragging(false);
   };
 
-  // Canvas Frame Synchronization Loop
+  // Canvas Synchronization Pipeline
   useEffect(() => {
     const video = videoRef.current;
     const canvas = previewCanvasRef.current;
@@ -226,15 +229,16 @@ export default function VideoViewport({
   return (
     <div className="relative flex-1 bg-zinc-900/40 border border-zinc-800/60 rounded-2xl overflow-hidden flex flex-col justify-between p-3 h-full min-h-0 select-none backdrop-blur-sm">
       
-      {/* Main Monitoring Deck Wrapper */}
+      {/* Monitoring Viewport Screen Container Wrapper */}
       <div 
         onMouseDown={handleCanvasMouseDown}
-        className="relative flex-1 flex items-center justify-center min-h-0 w-full rounded-xl bg-zinc-950 border border-zinc-900/60 overflow-hidden group shadow-inner cursor-default"
+        className="relative flex-1 flex items-center justify-center min-h-0 w-full rounded-xl bg-zinc-950 border border-zinc-900/60 overflow-hidden group shadow-inner"
+        style={{ cursor: zoomScale > 100 ? (isViewportDragging ? 'grabbing' : 'grab') : 'default' }}
       >
         {!videoSrc && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-zinc-500 font-mono text-xs z-10 bg-zinc-950">
             <span className="p-2.5 bg-zinc-900 rounded-xl border border-zinc-800 text-base">🎬</span>
-            <span>No active workspace sequence media loaded...</span>
+            <span>No active media loaded into the workspace track sequence...</span>
           </div>
         )}
 
@@ -248,13 +252,14 @@ export default function VideoViewport({
           crossOrigin="anonymous"
         />
 
+        {/* CSS Transformation Matrix synchronized directly with Global Layout States */}
         <div 
           style={{ 
-            transform: `translate(${panPosition.x}px, ${panPosition.y}px) scale(${zoomScale / 100})`,
+            transform: `translate(${translateX}px, ${translateY}px) scale(${zoomScale / 100})`,
             transformOrigin: 'center center',
             display: videoSrc ? 'flex' : 'none'
           }}
-          className="relative max-h-full max-w-full w-full h-full items-center justify-center transition-transform duration-75 ease-out"
+          className="relative max-h-full max-w-full w-full h-full items-center justify-center transition-transform duration-75 ease-out pointer-events-none"
         >
           <canvas
             ref={previewCanvasRef} 
@@ -318,8 +323,8 @@ export default function VideoViewport({
               value={zoomScale}
               onChange={(e) => {
                 const nextScale = Number(e.target.value);
-                setZoomScale(nextScale);
-                if (nextScale <= 100) setPanPosition({ x: 0, y: 0 }); 
+                onZoomChange(nextScale);
+                if (nextScale <= 100) onPanChange(0, 0); 
               }}
               className="w-16 md:w-24 h-1 bg-zinc-800 appearance-none rounded-lg cursor-pointer accent-indigo-500 focus:outline-none disabled:opacity-20"
             />

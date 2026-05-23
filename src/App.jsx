@@ -192,6 +192,12 @@ const [exportStatusText, setExportStatusText] = useState("");
   const [sidebarWidth, setSidebarWidth] = useState(220); 
   const [isTimelineOpen, setIsTimelineOpen] = useState(true);
   const [isDraggingText, setIsDraggingText] = useState(false);
+// Inside your App.jsx state block:
+const [zoomScale, setZoomScale] = useState(100); // Track as 100 baseline
+const [translateX, setTranslateX] = useState(0);
+const [translateY, setTranslateY] = useState(0);
+
+
 
   const [captionStyles, setCaptionStyles] = useState({
     preset: 'bold-kinetic',
@@ -543,6 +549,23 @@ const handleTimelineSeek = (time) => {
     }
   };
 
+  // Handler to snap the viewport dimensions back to center focus defaults
+  const handleResetView = () => {
+    setZoomScale(100);
+    setTranslateX(0);
+    setTranslateY(0);
+  };
+
+  // Handlers for click-and-drag frame grabbing adjustments
+  const handlePanChange = (newX, newY) => {
+    setTranslateX(newX);
+    setTranslateY(newY);
+  };
+
+  const handleZoomChange = (newScale) => {
+    setZoomScale(newScale);
+  };
+
   function setThemePreset(preset) {
     const updatedStyles = {
       preset: preset.id, fontFamily: preset.font, fontSize: preset.size, fontWeight: preset.weight, color: preset.color, textTransform: preset.trans, fontStyle: preset.style, strokeColor: preset.strokeColor, strokeWidth: preset.strokeWidth, shadow: preset.shadow, underline: preset.underline, strike: preset.strike, isEditingCustom: false
@@ -772,7 +795,14 @@ const handleExportVideo = async () => {
           <div className="flex-1 grid grid-cols-1 lg:grid-cols-5 p-6 gap-6 min-h-0 relative overflow-hidden">
             <div className={`lg:col-span-4 min-h-0 flex flex-col relative ${isDraggingText ? 'cursor-grabbing' : ''}`}>
               <VideoViewport 
-                videoSrc={videoSrc} videoRef={videoRef} previewCanvasRef={previewCanvasRef} isPlaying={isPlaying} currentTime={currentTime} duration={duration} activeCaption={currentActiveCaption} captions={captions} captionStyles={activeViewportStyles} onTogglePlay={handleTogglePlay}
+                videoSrc={videoSrc} videoRef={videoRef} previewCanvasRef={previewCanvasRef} 
+                zoomScale={zoomScale}
+  translateX={translateX}
+  translateY={translateY}
+  onZoomChange={handleZoomChange}
+  onPanChange={handlePanChange}
+  handleResetView={handleResetView}
+                isPlaying={isPlaying} currentTime={currentTime} duration={duration} activeCaption={currentActiveCaption} captions={captions} captionStyles={activeViewportStyles} onTogglePlay={handleTogglePlay}
                 onTimeUpdate={() => setCurrentTime(videoRef.current?.currentTime || 0)}
                 onLoadedMetadata={() => setDuration(videoRef.current?.duration || 0)}
                 setCaptions={setCaptions}
