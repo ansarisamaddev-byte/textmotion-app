@@ -5,6 +5,7 @@ import VideoViewport from './components/VideoViewport';
 import TimelineTrack from './components/TimelineTrack';
 import { Layers, Edit3, X, Bold, Italic, Underline, Strikethrough, Sparkles } from 'lucide-react';
 import RecordRTC from 'recordrtc';
+import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
 
 const INITIAL_CAPTIONS = [
   { 
@@ -18,7 +19,7 @@ const INITIAL_CAPTIONS = [
     xRel: 0.5, yRel: 0.82
   },
   { 
-    id: '3', start: 5.6, end: 9.0, text: "Ready to scale with your custom enhancements.",
+    id: '3', start: 5.6, end: 7.0, text: "Ready to scale with your custom enhancements.",
     fontFamily: 'Impact, Arial Black, sans-serif', fontSize: '48px', fontWeight: '900', fontStyle: 'normal', color: '#fbbf24', textTransform: 'uppercase',
     xRel: 0.5, yRel: 0.82
   }
@@ -187,7 +188,7 @@ export default function App() {
   const [selectedIds, setSelectedIds] = useState([]);
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
-
+const [exportStatusText, setExportStatusText] = useState("");
   const [sidebarWidth, setSidebarWidth] = useState(220); 
   const [isTimelineOpen, setIsTimelineOpen] = useState(true);
   const [isDraggingText, setIsDraggingText] = useState(false);
@@ -562,135 +563,182 @@ const handleTimelineSeek = (time) => {
   }
 
 const handleExportVideo = async () => {
-    if (!videoSrc || !videoRef.current) return;
+  if (!videoSrc || !videoRef.current) return;
 
-    setIsExporting(true);
-    setExportProgress(0);
+  setIsExporting(true);
+  setExportProgress(0);
+  setExportStatusText("Extracting clean audio track...");
 
-    const mainVideo = videoRef.current;
-    const nativeWidth = mainVideo.videoWidth || 1080;
-    const nativeHeight = mainVideo.videoHeight || 1920;
+  const mainVideo = videoRef.current;
+  const nativeWidth = mainVideo.videoWidth || 1080;
+  const nativeHeight = mainVideo.videoHeight || 1920;
 
-    const originalTime = mainVideo.currentTime;
-    const originalMuted = mainVideo.muted;
+  const originalTime = mainVideo.currentTime;
+  const originalMuted = mainVideo.muted;
 
-    mainVideo.pause();
-    mainVideo.currentTime = 0;
-    mainVideo.muted = false; 
+  mainVideo.pause();
 
-    const exportCanvas = document.createElement('canvas');
-    exportCanvas.width = nativeWidth;
-    exportCanvas.height = nativeHeight;
-    const exportCtx = exportCanvas.getContext('2d');
+  // 1. Setup MP4 Muxer for dual-stream rendering
+  const muxer = new Muxer({
+    target: new ArrayBufferTarget(),
+    video: {
+      codec: 'avc',
+      width: nativeWidth,
+      height: nativeHeight
+    },
+    audio: {
+      codec: 'aac',
+      numberOfChannels: 2,
+      sampleRate: 44100
+    },
+    fastStart: 'fragmented'
+  });
 
-    const videoStream = exportCanvas.captureStream(30);
-    let combinedStream = videoStream;
-    let audioDestination = null;
+  // 2. Configure Hardware Encoders
+  const videoEncoder = new VideoEncoder({
+    output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+    error: (e) => console.error("Video encoder error:", e)
+  });
+  await videoEncoder.configure({
+    codec: 'avc1.4d002a',
+    width: nativeWidth,
+    height: nativeHeight,
+    bitrate: 8000000,
+    framerate: 30,
+    latencyMode: 'quality'
+  });
 
-    // Persist and reuse AudioContext globally to prevent resource lockups on the HTML5 video element
-    if (!window._sharedAudioContext) {
-      window._sharedAudioContext = new (window.AudioContext || window.webkitAudioContext)();
-      window._sharedAudioSource = window._sharedAudioContext.createMediaElementSource(mainVideo);
-    }
+  const audioEncoder = new AudioEncoder({
+    output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
+    error: (e) => console.error("Audio encoder error:", e)
+  });
+  await audioEncoder.configure({
+    codec: 'mp4a.40.2', // Standard low-complexity AAC profile
+    numberOfChannels: 2,
+    sampleRate: 44100,
+    bitrate: 192000
+  });
 
-    const audioContext = window._sharedAudioContext;
-    const audioSource = window._sharedAudioSource;
+  // 3. Extract and Parse Pure Audio Track (FIXES ROBOTIC DISTORTION)
+  try {
+    const response = await fetch(videoSrc);
+    const arrayBuffer = await response.arrayBuffer();
+    const temporaryAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const decodedAudioBuffer = await temporaryAudioCtx.decodeAudioData(arrayBuffer);
+    temporaryAudioCtx.close();
 
-    try {
-      if (audioContext.state === 'suspended') {
-        await audioContext.resume();
-      }
+    const totalAudioSamples = Math.floor(duration * 44100);
+    const offlineCtx = new OfflineAudioContext(2, totalAudioSamples, 44100);
+    
+    const bufferSource = offlineCtx.createBufferSource();
+    bufferSource.buffer = decodedAudioBuffer;
+    bufferSource.connect(offlineCtx.destination);
+    bufferSource.start(0);
+    
+    const renderedBuffer = await offlineCtx.startRendering();
 
-      // Safely disconnect any previous graph pipelines before reconstruction
-      audioSource.disconnect();
-      
-      audioDestination = audioContext.createMediaStreamDestination();
-      
-      // Multi-route: Send audio to the recorder track AND back to standard speaker nodes
-      audioSource.connect(audioDestination);
-      audioSource.connect(audioContext.destination);
+    const sampleLength = renderedBuffer.length;
+    const leftData = renderedBuffer.getChannelData(0);
+    const rightData = renderedBuffer.getChannelData(1);
+    
+    // Allocate a continuous allocation block big enough for both channels
+    const audioDataBuffer = new Float32Array(sampleLength * 2);
+    
+    // WebCodecs 'f32-planar' expects all Left samples, then all Right samples sequentially
+    audioDataBuffer.set(leftData, 0);
+    audioDataBuffer.set(rightData, sampleLength);
 
-      const audioTrack = audioDestination.stream.getAudioTracks()[0];
-      if (audioTrack) {
-        videoStream.addTrack(audioTrack);
-        combinedStream = videoStream;
-      }
-    } catch (audioErr) {
-      console.warn("Web Audio Routing notice:", audioErr);
-    }
-
-    const recorder = RecordRTC(combinedStream, {
-      type: 'video', 
-      mimeType: 'video/webm', 
-      bitsPerSecond: 8000000
+    const audioDataBlock = new AudioData({
+      format: 'f32-planar', // Explicitly keep it in clean planar layout structure
+      sampleRate: 44100,
+      numberOfFrames: sampleLength,
+      numberOfChannels: 2,
+      timestamp: 0,
+      data: audioDataBuffer
     });
 
-    recorder.startRecording();
-    let animId = null;
+    audioEncoder.encode(audioDataBlock);
+    audioDataBlock.close();
+  } catch (audioErr) {
+    console.warn("Direct source audio parsing failed, falling back to silent track:", audioErr);
+  }
 
-    const processFrame = () => {
-      if (!mainVideo || mainVideo.paused || mainVideo.ended) return;
+  // 4. Run the High-Quality Video Frame Rendering Loop (FIXES BLUR)
+  const exportCanvas = document.createElement('canvas');
+  exportCanvas.width = nativeWidth;
+  exportCanvas.height = nativeHeight;
+  const exportCtx = exportCanvas.getContext('2d');
 
-      renderCaptionFrame(exportCtx, exportCanvas, mainVideo, captions, captionStyles);
+  let frameCount = 0;
+  const fps = 30;
+  const frameDurationInMicroseconds = 1000000 / fps;
 
-      const progress = Math.min(99, Math.floor((mainVideo.currentTime / duration) * 100));
-      setExportProgress(progress);
+  const renderNextFrame = async () => {
+    const currentFrameTimeInSeconds = frameCount / fps;
 
-      if (mainVideo.currentTime < duration && !mainVideo.ended) {
-        animId = requestAnimationFrame(processFrame);
+    if (currentFrameTimeInSeconds >= duration) {
+      setExportStatusText("Compiling final video tracks...");
+      await videoEncoder.flush();
+      await audioEncoder.flush();
+      muxer.finalize();
+
+      const buffer = muxer.target.buffer;
+      const finalMp4Blob = new Blob([buffer], { type: 'video/mp4' });
+
+      const url = URL.createObjectURL(finalMp4Blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `textmotion-hd-render-${Date.now()}.mp4`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(url);
+
+      mainVideo.currentTime = originalTime;
+      mainVideo.muted = originalMuted;
+      setIsExporting(false);
+      setExportStatusText("");
+      return;
+    }
+
+    mainVideo.currentTime = currentFrameTimeInSeconds;
+
+    // Wait completely for the hardware seek and frame decoder pipeline to catch up
+    await new Promise((resolve) => {
+      if ('requestVideoFrameCallback' in mainVideo) {
+        mainVideo.requestVideoFrameCallback(() => resolve());
+      } else {
+        const onSeeked = () => {
+          mainVideo.removeEventListener('seeked', onSeeked);
+          setTimeout(resolve, 40); // 40ms pad clears out any remaining GPU rendering blur
+        };
+        mainVideo.addEventListener('seeked', onSeeked);
       }
-    };
+    });
 
-    setTimeout(() => {
-      mainVideo.play().then(() => {
-        animId = requestAnimationFrame(processFrame);
-      }).catch(err => {
-        console.error("Export frame capture engine error:", err);
-        setIsExporting(false);
-      });
-    }, 150);
+    // Draw sharp frame onto canvas layer
+    renderCaptionFrame(exportCtx, exportCanvas, mainVideo, captions, captionStyles);
 
-    const finalizeVideo = () => {
-      if (animId) cancelAnimationFrame(animId);
-      clearInterval(safetyInterval);
+    const timestampInMicroseconds = frameCount * frameDurationInMicroseconds;
+    const frameInstance = new VideoFrame(exportCanvas, {
+      timestamp: timestampInMicroseconds,
+      duration: frameDurationInMicroseconds
+    });
 
-      recorder.stopRecording(() => {
-        setExportProgress(100);
-        const blob = recorder.getBlob();
-        const url = URL.createObjectURL(blob);
+    videoEncoder.encode(frameInstance, { keyFrame: frameCount % 90 === 0 });
+    frameInstance.close();
 
-        const anchor = document.createElement('a');
-        anchor.href = url;
-        anchor.download = `textmotion-render-${Date.now()}.webm`;
-        document.body.appendChild(anchor);
-        anchor.click();
+    const progressPercent = Math.floor((currentFrameTimeInSeconds / duration) * 100);
+    setExportProgress(progressPercent);
+    setExportStatusText(`Rendering crisp frames: ${progressPercent}%`);
 
-        document.body.removeChild(anchor);
-        URL.revokeObjectURL(url);
-
-        // CLEANUP STEP: Tear down target streams but route standard element channel back to speakers
-        if (audioSource) {
-          audioSource.disconnect();
-          audioSource.connect(audioContext.destination);
-        }
-        if (audioDestination) {
-          audioDestination.disconnect();
-        }
-
-        mainVideo.pause();
-        mainVideo.currentTime = originalTime;
-        mainVideo.muted = originalMuted;
-        setIsPlaying(false);
-        setIsExporting(false);
-      });
-    };
-
-    const safetyInterval = setInterval(() => {
-      if (mainVideo.currentTime >= duration || mainVideo.ended) {
-        finalizeVideo();
-      }
-    }, 100);
+    frameCount++;
+    setTimeout(renderNextFrame, 5); 
   };
+
+  // Launch video parsing runtime stack
+  renderNextFrame();
+};
 
   const currentActiveCaption = captions.find(c => c.id === activeId);
   const activeViewportStyles = currentActiveCaption ? {
