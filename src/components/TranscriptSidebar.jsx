@@ -51,7 +51,7 @@ export default function TranscriptSidebar({
               <div className="flex items-center gap-1.5 w-full min-w-0">
                 <div className="grid grid-cols-2 gap-1 flex-1 min-w-0">
                   <div className="flex items-center bg-zinc-900/60 border border-zinc-800/80 rounded-md px-1.5 py-1 min-w-0">
-                    <span className="text-[9px] text-zinc-500 font-mono select-none mr-1 shrink-0">IN</span>
+                    {/* <span className="text-[9px] text-zinc-500 font-mono select-none mr-1 shrink-0">IN</span> */}
                     <input
                       type="number"
                       step="0.1"
@@ -62,7 +62,7 @@ export default function TranscriptSidebar({
                     />
                   </div>
                   <div className="flex items-center bg-zinc-900/60 border border-zinc-800/80 rounded-md px-1.5 py-1 min-w-0">
-                    <span className="text-[9px] text-zinc-500 font-mono select-none mr-1 shrink-0">OUT</span>
+                    {/* <span className="text-[9px] text-zinc-500 font-mono select-none mr-1 shrink-0">OUT</span> */}
                     <input
                       type="number"
                       step="0.1"

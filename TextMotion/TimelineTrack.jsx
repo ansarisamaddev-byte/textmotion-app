@@ -5,22 +5,25 @@ export default function TimelineTrack({
   currentTime, 
   duration, 
   activeId, 
-  selectedIds = [], // Fallback default array
+  selectedIds = [], 
   onSelectCaption, 
-  onSeek 
+  onSeek,
+  // ⚡ Accept the dynamic height parameter passed down from your resize handler wrapper
+  timelineHeight 
 }) {
   return (
-    <div className="w-full h-full p-4 relative bg-zinc-900 border-t border-zinc-800">
-      {/* ... layout timeline boundaries and scrub bars ... */}
+    // Remove the rigid styling anchors; flex-1 and h-full allow this track to absorb the container sizing
+    <div className="w-full h-full p-3 relative bg-zinc-950 flex flex-col min-h-0 select-none">
       
-      <div className="relative w-full h-24 bg-zinc-950/60 rounded-xl border border-zinc-800/80 overflow-hidden">
+      {/* 🗜️ DYNAMIC FLEX CONTAINER: Height responds instantly to timelineHeight adjustments */}
+      <div 
+        className="relative w-full flex-1 bg-zinc-900/40 rounded-xl border border-zinc-800/60 overflow-hidden"
+      >
         {captions.map((caption) => {
-          // Check if this block matches current playback time OR if the user manually clicked it
           const isCurrentActive = activeId === caption.id;
           const isUserSelected = selectedIds.includes(caption.id);
           const isHighlighted = isCurrentActive || isUserSelected;
 
-          // Convert timeline timestamps to percentages for absolute layout styling position
           const leftPercent = duration > 0 ? (caption.start / duration) * 100 : 0;
           const widthPercent = duration > 0 ? ((caption.end - caption.start) / duration) * 100 : 0;
 
@@ -28,20 +31,22 @@ export default function TimelineTrack({
             <div
               key={caption.id}
               onClick={(e) => {
-                e.stopPropagation(); // Stop timeline track click bubbles from breaking selection
+                e.stopPropagation(); 
                 if (onSelectCaption) onSelectCaption(caption.id);
               }}
               style={{
                 left: `${leftPercent}%`,
                 width: `${widthPercent}%`,
               }}
-              className={`absolute top-4 bottom-4 rounded-lg px-2 flex items-center justify-center border text-[10px] font-mono transition-all cursor-pointer select-none overflow-hidden ${
+              // 📐 Replacing top-4 bottom-4 with a percentage-based margin (top-[15%] bottom-[15%])
+              // This ensures the block shrinks gracefully without spilling outside the frame when squeezed!
+              className={`absolute top-[15%] bottom-[15%] rounded-lg px-3 flex items-center justify-center border text-[11px] font-medium transition-all cursor-pointer overflow-hidden ${
                 isHighlighted
-                  ? 'bg-indigo-600/20 border-indigo-500 text-white shadow-md shadow-indigo-500/10 font-bold'
-                  : 'bg-zinc-900/80 border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200'
+                  ? 'bg-indigo-600/20 border-indigo-500 text-white shadow-lg shadow-indigo-500/5 font-bold'
+                  : 'bg-zinc-900/90 border-zinc-800/80 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200'
               }`}
             >
-              <span className="truncate max-w-full">
+              <span className="truncate max-w-full tracking-wide px-1">
                 {caption.text}
               </span>
             </div>

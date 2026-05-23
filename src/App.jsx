@@ -189,7 +189,7 @@ export default function App() {
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
 const [exportStatusText, setExportStatusText] = useState("");
-  const [sidebarWidth, setSidebarWidth] = useState(220); 
+  const [sidebarWidth, setSidebarWidth] = useState(180); 
   const [isTimelineOpen, setIsTimelineOpen] = useState(true);
   const [isDraggingText, setIsDraggingText] = useState(false);
 // Inside your App.jsx state block:
@@ -231,8 +231,42 @@ const translateYRef = useRef(translateY);
   useEffect(() => { currentTimeRef.current = currentTime; }, [currentTime]);
   useEffect(() => { captionStylesRef.current = captionStyles; }, [captionStyles]);
   useEffect(() => { zoomScaleRef.current = zoomScale; }, [zoomScale]);
-useEffect(() => { translateXRef.current = translateX; }, [translateX]);
-useEffect(() => { translateYRef.current = translateY; }, [translateY]);
+  useEffect(() => { translateXRef.current = translateX; }, [translateX]);
+  useEffect(() => { translateYRef.current = translateY; }, [translateY]);
+
+const [timelineHeight, setTimelineHeight] = useState(220); // Default height in pixels
+const isResizingRef = useRef(false);
+const isTimelineResizingRef = useRef(false);
+
+  const handleTimelineResizeStart = useCallback((mouseDownEvent) => {
+    mouseDownEvent.preventDefault();
+    isResizingRef.current = true;
+
+    const startY = mouseDownEvent.clientY;
+    const startHeight = timelineHeight;
+
+    const doDrag = (mouseMoveEvent) => {
+      if (!isResizingRef.current) return;
+      // Squeezing up moves mouse Y up (negative delta), which INCREASES timeline height.
+      // Pulling down decreases timeline height.
+      const deltaY = mouseMoveEvent.clientY - startY;
+      const newHeight = startHeight - deltaY;
+
+      // 🔒 Define your explicit absolute Min and Max bounds here:
+      if (newHeight >= 120 && newHeight <= 220) {
+        setTimelineHeight(newHeight);
+      }
+    };
+
+    const stopDrag = () => {
+      isResizingRef.current = false;
+      window.removeEventListener('mousemove', doDrag);
+      window.removeEventListener('mouseup', stopDrag);
+    };
+
+    window.addEventListener('mousemove', doDrag);
+    window.addEventListener('mouseup', stopDrag);
+  }, [timelineHeight]);
 
   // Synchronize Active Subtitle Block ID
   useEffect(() => {
@@ -259,45 +293,45 @@ useEffect(() => { translateYRef.current = translateY; }, [translateY]);
     }
   }, [currentTime, isPlaying, captions, videoSrc]);
 
-const handleViewportMouseDown = (e) => {
-  const canvasElement = previewCanvasRef.current;
-  if (!canvasElement) return;
+  const handleViewportMouseDown = (e) => {
+    const canvasElement = previewCanvasRef.current;
+    if (!canvasElement) return;
 
-  const activeCap = captionsRef.current.find(
-    c => currentTimeRef.current >= c.start && currentTimeRef.current <= c.end
-  );
-  
-  if (!activeCap || !activeCap._metaBoundingBox) return; 
-
-  const { canvasX, canvasY, visualWidthUnscaled, visualHeightUnscaled } = getCanvasRelativeCoords(e.clientX, e.clientY);
-  const box = activeCap._metaBoundingBox;
-
-  if (
-    canvasX >= box.centerX - (box.width / 2) - 30 &&
-    canvasX <= box.centerX + (box.width / 2) + 30 &&
-    canvasY >= box.topY - 30 &&
-    canvasY <= box.bottomY + 30
-  ) {
-    // ✅ Hit Text: Intercept and handle text motion
-    localIsDragging = true;
-    if (typeof setIsDraggingText === 'function') setIsDraggingText(true);
-    canvasElement.setAttribute('data-dragging-active', 'true');
+    const activeCap = captionsRef.current.find(
+      c => currentTimeRef.current >= c.start && currentTimeRef.current <= c.end
+    );
     
-    dragConfig = {
-      captionId: activeCap.id,
-      initialXRel: activeCap.xRel !== undefined ? activeCap.xRel : 0.5,
-      initialYRel: activeCap.yRel !== undefined ? activeCap.yRel : 0.82,
-      startX: e.clientX,
-      startY: e.clientY,
-      visualWidthUnscaled,
-      visualHeightUnscaled
-    };
-    
-    e.preventDefault();
-    e.stopPropagation(); // Stop the event right here so the frame doesn't pan while moving text
-  }
-  // 💡 No else block: If we miss the text, the event bubbles naturally to the panning container
-};
+    if (!activeCap || !activeCap._metaBoundingBox) return; 
+
+    const { canvasX, canvasY, visualWidthUnscaled, visualHeightUnscaled } = getCanvasRelativeCoords(e.clientX, e.clientY);
+    const box = activeCap._metaBoundingBox;
+
+    if (
+      canvasX >= box.centerX - (box.width / 2) - 30 &&
+      canvasX <= box.centerX + (box.width / 2) + 30 &&
+      canvasY >= box.topY - 30 &&
+      canvasY <= box.bottomY + 30
+    ) {
+      // ✅ Hit Text: Intercept and handle text motion
+      localIsDragging = true;
+      if (typeof setIsDraggingText === 'function') setIsDraggingText(true);
+      canvasElement.setAttribute('data-dragging-active', 'true');
+      
+      dragConfig = {
+        captionId: activeCap.id,
+        initialXRel: activeCap.xRel !== undefined ? activeCap.xRel : 0.5,
+        initialYRel: activeCap.yRel !== undefined ? activeCap.yRel : 0.82,
+        startX: e.clientX,
+        startY: e.clientY,
+        visualWidthUnscaled,
+        visualHeightUnscaled
+      };
+      
+      e.preventDefault();
+      e.stopPropagation(); // Stop the event right here so the frame doesn't pan while moving text
+    }
+    // 💡 No else block: If we miss the text, the event bubbles naturally to the panning container
+  };
 
 useEffect(() => {
   const canvasElement = previewCanvasRef.current;
@@ -484,7 +518,7 @@ useEffect(() => {
   animId = requestAnimationFrame(updateLoop);
 
   return () => cancelAnimationFrame(animId);
-}, []);
+  }, []);
 
   const handleVideoUpload = (e) => {
     const file = e.target.files[0];
@@ -579,7 +613,7 @@ const handleTimelineSeek = (time) => {
   const handleSeparatorMouseDown = (e) => {
     e.preventDefault();
     const handleMouseMove = (moveEvent) => {
-      setSidebarWidth(Math.max(220, Math.min(300, moveEvent.clientX)));
+      setSidebarWidth(Math.max(180, Math.min(250, moveEvent.clientX)));
     };
     const handleMouseUp = () => {
       document.removeEventListener('mousemove', handleMouseMove);
@@ -868,7 +902,7 @@ const handleLoadedMetadata = (e) => {
     yRel: currentActiveCaption.yRel !== undefined ? currentActiveCaption.yRel : 0.82
   } : captionStyles;
 
-  return (
+return (
     <div className="flex flex-col h-screen bg-zinc-950 text-zinc-100 font-sans select-none overflow-hidden">
       <WorkspaceHeader onVideoUpload={handleVideoUpload} onExport={handleExportVideo} isExporting={isExporting} exportProgress={exportProgress} hasVideo={!!videoSrc} />
 
@@ -880,33 +914,32 @@ const handleLoadedMetadata = (e) => {
         <div onMouseDown={handleSeparatorMouseDown} className="w-1.5 h-full bg-zinc-900 hover:bg-indigo-500/80 cursor-col-resize shrink-0 z-40" />
 
         <main className="flex-1 flex flex-col bg-zinc-950 overflow-hidden min-w-0">
+          {/* Main Content Workspace: flex-1 ensures this area dynamically shrinks or expands when the timeline changes height */}
           <div className="flex-1 grid grid-cols-1 lg:grid-cols-5 p-6 gap-6 min-h-0 relative overflow-hidden">
             <div className={`lg:col-span-4 min-h-0 flex flex-col relative ${isDraggingText ? 'cursor-grabbing' : ''}`}>
-<VideoViewport 
-  videoSrc={videoSrc}
-  videoRef={videoRef}
-  isPlaying={isPlaying}
-  currentTime={currentTime}
-  duration={duration}
-  
-  // Ensure this prop points to a valid local function variable name now
-  onTogglePlay={handleTogglePlay} 
-  onTimeUpdate={handleTimeUpdate}        
-  onLoadedMetadata={handleLoadedMetadata}
-  zoomScale={zoomScale}
-  translateX={translateX}
-  translateY={translateY}
-  onZoomChange={setZoomScale}
-  onPanChange={(x, y) => {
-    setTranslateX(x);
-    setTranslateY(y);
-  }}
-  handleResetView={handleResetView}
-  previewCanvasRef={previewCanvasRef}
-  captions={captions}
-  captionStyles={captionStyles}
-  setCaptions={setCaptions}
-/>
+              <VideoViewport 
+                videoSrc={videoSrc}
+                videoRef={videoRef}
+                isPlaying={isPlaying}
+                currentTime={currentTime}
+                duration={duration}
+                onTogglePlay={handleTogglePlay} 
+                onTimeUpdate={handleTimeUpdate}        
+                onLoadedMetadata={handleLoadedMetadata}
+                zoomScale={zoomScale}
+                translateX={translateX}
+                translateY={translateY}
+                onZoomChange={setZoomScale}
+                onPanChange={(x, y) => {
+                  setTranslateX(x);
+                  setTranslateY(y);
+                }}
+                handleResetView={handleResetView}
+                previewCanvasRef={previewCanvasRef}
+                captions={captions}
+                captionStyles={captionStyles}
+                setCaptions={setCaptions}
+              />
             </div>
 
             {/* Config Panel Right Column */}
@@ -1006,8 +1039,32 @@ const handleLoadedMetadata = (e) => {
             </div>
           </div>
 
-          <div className="shrink-0 w-full bg-zinc-900 h-[220px] overflow-hidden">
-            <TimelineTrack videoSrc={videoSrc} captions={captions} currentTime={currentTime} duration={duration} activeId={activeId} selectedIds={selectedIds} onSelectCaption={handleSelectCaption} onSeek={handleTimelineSeek} />       
+          {/* ─── 📥 DYNAMIC RESIZABLE TIMELINE FOOTER ─── */}
+          {/* Removed h-[220px] and replaced with live variable height + relative positioning */}
+          <div 
+            style={{ height: `${timelineHeight}px` }} 
+            className="shrink-0 w-full bg-zinc-900 overflow-hidden relative border-t border-zinc-800/80 flex flex-col min-h-0"
+          >
+            {/* ↕️ THE RESIZER GHOST HANDLE: Placed on the very top edge of the track panel */}
+            <div
+              onMouseDown={handleTimelineResizeStart}
+              className="absolute top-0 left-0 right-0 h-1.5 cursor-ns-resize bg-transparent hover:bg-indigo-500/60 transition-colors duration-150 z-50"
+            />
+            
+            {/* Timeline element inside its layout flex track */}
+            <div className="flex-1 min-h-0 w-full">
+              <TimelineTrack 
+                videoSrc={videoSrc} 
+                captions={captions} 
+                currentTime={currentTime} 
+                duration={duration} 
+                activeId={activeId} 
+                selectedIds={selectedIds} 
+                onSelectCaption={handleSelectCaption} 
+                onSeek={handleTimelineSeek}
+                timelineHeight={timelineHeight} // Passed securely into your timeline track elements
+              />       
+            </div>
           </div>
         </main>
       </div>
