@@ -288,7 +288,7 @@ const handleGlobalMouseUp = (e) => {
         >
           <canvas
             ref={previewCanvasRef} 
-            className="max-h-full max-w-full object-contain bg-black rounded-xl shadow-2xl pointer-events-auto"
+            className="max-h-full max-w-full object-contain bg-black shadow-2xl pointer-events-auto"
             style={{ aspectRatio: '9/16' }}
           />
         </div>
