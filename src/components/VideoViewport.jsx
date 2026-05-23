@@ -12,20 +12,20 @@ export default function VideoViewport({
   captions, 
   captionStyles,    
   onTogglePlay, 
-  onTimeUpdate, 
-  onLoadedMetadata,
+  onTimeUpdate,    
+  onLoadedMetadata, 
   previewCanvasRef, 
   
   // Lifted Global View State Pointers
-  zoomScale,      // Controlled externally (e.g., 100 to 400)
-  translateX,     // Controlled externally (panning X offset)
-  translateY,     // Controlled externally (panning Y offset)
-  onZoomChange,   // State setter function passed from App.jsx
-  onPanChange,    // State setter function passed from App.jsx
+  zoomScale,      
+  translateX,     
+  translateY,     
+  onZoomChange,   
+  onPanChange,    
   handleResetView,
   setCaptions       
 }) {
-  const [isViewportDragging, setIsViewportDragging] = useState(false);
+  const isViewportDraggingRef = useRef(false);
   
   const viewportDragStart = useRef({ x: 0, y: 0 });
   const textDragConfig = useRef(null); 
@@ -68,119 +68,145 @@ export default function VideoViewport({
     videoRef.current.currentTime = newTime;
   };
 
-  const getCanvasRelativeCoords = (clientX, clientY, canvasElement) => {
-    const rect = canvasElement.getBoundingClientRect();
+  // ✅ FIXED COORDINATE MAPPING METHOD
+  const getCanvasRelativeCoords = (clientX, clientY, canvasElement, containerElement) => {
+    const canvasRect = canvasElement.getBoundingClientRect();
+    const containerRect = containerElement.getBoundingClientRect();
+    
+    const currentScaleMultiplier = zoomScale / 100;
+
+    // 1. Calculate where the canvas top-left corner sits natively inside its unscaled parent frame
+    const canvasVisualWidthUnscaled = canvasRect.width / currentScaleMultiplier;
+    const canvasVisualHeightUnscaled = canvasRect.height / currentScaleMultiplier;
+
+    // 2. Track screen client click offsets relative to the parent bounding frame
+    const rawVisualX = clientX - canvasRect.left;
+    const rawVisualY = clientY - canvasRect.top;
+
+    // 3. Reverse project translation vectors and scaling factors
+    const canvasX = (rawVisualX / canvasRect.width) * canvasElement.width;
+    const canvasY = (rawVisualY / canvasRect.height) * canvasElement.height;
+
     return {
-      canvasX: ((clientX - rect.left) / rect.width) * canvasElement.width,
-      canvasY: ((clientY - rect.top) / rect.height) * canvasElement.height,
-      viewportWidth: rect.width,
-      viewportHeight: rect.height
+      canvasX,
+      canvasY,
+      viewportWidth: canvasVisualWidthUnscaled,
+      viewportHeight: canvasVisualHeightUnscaled
     };
   };
 
   const handleCanvasMouseDown = (e) => {
-    const canvas = previewCanvasRef.current;
-    if (!canvas || !videoSrc) return;
+  const canvas = previewCanvasRef.current;
+  const container = e.currentTarget; 
+  if (!canvas || !videoSrc) return;
 
-    const activeCap = captionsRef.current?.find(c => currentTime >= c.start && currentTime <= c.end);
-    
-    if (activeCap && activeCap._metaBoundingBox) {
-      const { canvasX, canvasY, viewportWidth, viewportHeight } = getCanvasRelativeCoords(e.clientX, e.clientY, canvas);
-      const box = activeCap._metaBoundingBox;
+  // 1. Caption text hit tracking
+  const activeCap = captionsRef.current?.find(c => currentTime >= c.start && currentTime <= c.end);
+  let textDragTriggered = false;
+  
+  if (activeCap && activeCap._metaBoundingBox) {
+    const { canvasX, canvasY, viewportWidth, viewportHeight } = getCanvasRelativeCoords(e.clientX, e.clientY, canvas, container);
+    const box = activeCap._metaBoundingBox;
 
-      const isWithinX = canvasX >= (box.centerX - (box.width / 2) - 60) && canvasX <= (box.centerX + (box.width / 2) + 60);
-      const isWithinY = canvasY >= (box.topY - 60) && canvasY <= (box.bottomY + 60);
+    const isWithinX = canvasX >= (box.centerX - (box.width / 2) - 40) && canvasX <= (box.centerX + (box.width / 2) + 40);
+    const isWithinY = canvasY >= (box.topY - 40) && canvasY <= (box.bottomY + 40);
 
-      if (isWithinX && isWithinY) {
-        e.preventDefault();
-        e.stopPropagation();
+    if (isWithinX && isWithinY) {
+      e.preventDefault();
+      
+      textDragConfig.current = {
+        captionId: activeCap.id,
+        initialXRel: activeCap.xRel !== undefined ? activeCap.xRel : 0.5,
+        initialYRel: activeCap.yRel !== undefined ? activeCap.yRel : 0.82,
+        startX: e.clientX,
+        startY: e.clientY,
+        viewportWidth,
+        viewportHeight
+      };
 
-        textDragConfig.current = {
-          captionId: activeCap.id,
-          initialXRel: activeCap.xRel !== undefined ? activeCap.xRel : 0.5,
-          initialYRel: activeCap.yRel !== undefined ? activeCap.yRel : 0.82,
-          startX: e.clientX,
-          startY: e.clientY,
-          viewportWidth,
-          viewportHeight
-        };
-
-        window.addEventListener('mousemove', handleGlobalMouseMove, { passive: true });
-        window.addEventListener('mouseup', handleGlobalMouseUp);
-        return; 
-      }
-    }
-
-    // Panning framework triggered if zoom scale exceeds baseline parameters
-    if (zoomScale > 100) {
-      setIsViewportDragging(true);
-      viewportDragStart.current = { x: e.clientX - translateX, y: e.clientY - translateY };
+      textDragTriggered = true;
       window.addEventListener('mousemove', handleGlobalMouseMove, { passive: true });
       window.addEventListener('mouseup', handleGlobalMouseUp);
     }
-  };
+  }
 
-  const handleGlobalMouseMove = (e) => {
-    if (textDragConfig.current) {
-      const config = textDragConfig.current;
-      const canvas = previewCanvasRef.current;
-      const video = videoRef.current;
-      if (!canvas || !video) return;
+  // 2. FALLBACK: Frame panning activation paths
+  if (!textDragTriggered) {
+    // ✅ Change this to update the ref pointer instantly
+    isViewportDraggingRef.current = true; 
+    viewportDragStart.current = { x: e.clientX - translateX, y: e.clientY - translateY };
+    
+    window.addEventListener('mousemove', handleGlobalMouseMove, { passive: true });
+    window.addEventListener('mouseup', handleGlobalMouseUp);
+  }
+};
 
-      const currentDeltaX = e.clientX - config.startX;
-      const currentDeltaY = e.clientY - config.startY;
+const handleGlobalMouseMove = (e) => {
+  if (textDragConfig.current) {
+    const config = textDragConfig.current;
+    const canvas = previewCanvasRef.current;
+    const video = videoRef.current;
+    if (!canvas || !video) return;
 
-      const changeXRel = currentDeltaX / config.viewportWidth;
-      const changeYRel = currentDeltaY / config.viewportHeight;
+    const currentDeltaX = e.clientX - config.startX;
+    const currentDeltaY = e.clientY - config.startY;
 
-      const calculatedX = Math.max(0.01, Math.min(0.99, config.initialXRel + changeXRel));
-      const calculatedY = Math.max(0.01, Math.min(0.99, config.initialYRel + changeYRel));
+    const currentScaleMultiplier = zoomScale / 100;
+    const changeXRel = (currentDeltaX / currentScaleMultiplier) / config.viewportWidth;
+    const changeYRel = (currentDeltaY / currentScaleMultiplier) / config.viewportHeight;
 
-      const activeCap = captionsRef.current?.find(c => c.id === config.captionId);
-      if (activeCap) {
-        activeCap.xRel = calculatedX;
-        activeCap.yRel = calculatedY;
+    const calculatedX = Math.max(0.01, Math.min(0.99, config.initialXRel + changeXRel));
+    const calculatedY = Math.max(0.01, Math.min(0.99, config.initialYRel + changeYRel));
+
+    const activeCap = captionsRef.current?.find(c => c.id === config.captionId);
+    if (activeCap) {
+      activeCap.xRel = calculatedX;
+      activeCap.yRel = calculatedY;
+    }
+
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    renderCaptionFrame(ctx, canvas, video, captionsRef.current || [], captionStyles);
+    
+  // ✅ Read directly from the instant pointer ref value now
+  } else if (isViewportDraggingRef.current) {
+    onPanChange(
+      e.clientX - viewportDragStart.current.x,
+      e.clientY - viewportDragStart.current.y
+    );
+  }
+};
+
+const handleGlobalMouseUp = (e) => {
+  window.removeEventListener('mousemove', handleGlobalMouseMove);
+  window.removeEventListener('mouseup', handleGlobalMouseUp);
+
+  if (textDragConfig.current) {
+    const config = textDragConfig.current;
+    
+    const finalDeltaX = e.clientX - config.startX;
+    const finalDeltaY = e.clientY - config.startY;
+
+    const currentScaleMultiplier = zoomScale / 100;
+    const changeXRel = (finalDeltaX / currentScaleMultiplier) / config.viewportWidth;
+    const changeYRel = (finalDeltaY / currentScaleMultiplier) / config.viewportHeight;
+
+    const calculatedX = Math.max(0.01, Math.min(0.99, config.initialXRel + changeXRel));
+    const calculatedY = Math.max(0.01, Math.min(0.99, config.initialYRel + changeYRel));
+
+    setCaptions(prevTrackList => prevTrackList.map(item => {
+      if (item.id === config.captionId) {
+        return { ...item, xRel: calculatedX, yRel: calculatedY };
       }
+      return item;
+    }));
 
-      const ctx = canvas.getContext('2d');
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      renderCaptionFrame(ctx, canvas, video, captionsRef.current || [], captionStyles);
-    } else if (isViewportDragging) {
-      // Emit spatial adjustments upward to App.jsx global tracking metrics
-      onPanChange(
-        e.clientX - viewportDragStart.current.x,
-        e.clientY - viewportDragStart.current.y
-      );
-    }
-  };
-
-  const handleGlobalMouseUp = (e) => {
-    window.removeEventListener('mousemove', handleGlobalMouseMove);
-    window.removeEventListener('mouseup', handleGlobalMouseUp);
-
-    if (textDragConfig.current) {
-      const config = textDragConfig.current;
-      
-      const finalDeltaX = e.clientX - config.startX;
-      const finalDeltaY = e.clientY - config.startY;
-
-      const changeXRel = finalDeltaX / config.viewportWidth;
-      const changeYRel = finalDeltaY / config.viewportHeight;
-
-      const calculatedX = Math.max(0.01, Math.min(0.99, config.initialXRel + changeXRel));
-      const calculatedY = Math.max(0.01, Math.min(0.99, config.initialYRel + changeYRel));
-
-      setCaptions(prevTrackList => prevTrackList.map(item => {
-        if (item.id === config.captionId) {
-          return { ...item, xRel: calculatedX, yRel: calculatedY };
-        }
-        return item;
-      }));
-
-      textDragConfig.current = null;
-    }
-    setIsViewportDragging(false);
-  };
+    textDragConfig.current = null;
+  }
+  
+  // ✅ Clean up the ref pointer instantly when dragging ends
+  isViewportDraggingRef.current = false; 
+};
 
   // Canvas Synchronization Pipeline
   useEffect(() => {
@@ -231,10 +257,10 @@ export default function VideoViewport({
       
       {/* Monitoring Viewport Screen Container Wrapper */}
       <div 
-        onMouseDown={handleCanvasMouseDown}
-        className="relative flex-1 flex items-center justify-center min-h-0 w-full rounded-xl bg-zinc-950 border border-zinc-900/60 overflow-hidden group shadow-inner"
-        style={{ cursor: zoomScale > 100 ? (isViewportDragging ? 'grabbing' : 'grab') : 'default' }}
-      >
+  onMouseDown={handleCanvasMouseDown}
+  className="relative flex-1 flex items-center justify-center min-h-0 w-full rounded-xl bg-zinc-950 border border-zinc-900/60 overflow-hidden group shadow-inner pointer-events-auto"
+  style={{ cursor: zoomScale > 100 ? (isViewportDraggingRef.current ? 'grabbing' : 'grab') : 'default' }}
+>
         {!videoSrc && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-zinc-500 font-mono text-xs z-10 bg-zinc-950">
             <span className="p-2.5 bg-zinc-900 rounded-xl border border-zinc-800 text-base">🎬</span>
@@ -252,14 +278,13 @@ export default function VideoViewport({
           crossOrigin="anonymous"
         />
 
-        {/* CSS Transformation Matrix synchronized directly with Global Layout States */}
         <div 
           style={{ 
             transform: `translate(${translateX}px, ${translateY}px) scale(${zoomScale / 100})`,
             transformOrigin: 'center center',
             display: videoSrc ? 'flex' : 'none'
           }}
-          className="relative max-h-full max-w-full w-full h-full items-center justify-center transition-transform duration-75 ease-out pointer-events-none"
+          className="relative max-h-full max-w-full w-full h-full flex items-center justify-center transition-transform duration-75 ease-out pointer-events-none"
         >
           <canvas
             ref={previewCanvasRef} 
@@ -271,7 +296,7 @@ export default function VideoViewport({
         {zoomScale > 100 && videoSrc && (
           <button 
             onClick={handleResetView}
-            className="absolute top-3 right-3 z-30 bg-zinc-900/80 hover:bg-zinc-800 text-[10px] text-zinc-400 hover:text-white font-mono px-2 py-1 rounded border border-zinc-800 transition backdrop-blur"
+            className="absolute top-3 right-3 z-30 bg-zinc-900/80 hover:bg-zinc-800 text-[10px] text-zinc-400 hover:text-white font-mono px-2 py-1 rounded border border-zinc-800 transition backdrop-blur pointer-events-auto"
           >
             Reset View
           </button>

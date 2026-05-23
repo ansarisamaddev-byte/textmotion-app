@@ -223,9 +223,16 @@ const [translateY, setTranslateY] = useState(0);
   const currentTimeRef = useRef(currentTime);
   const captionStylesRef = useRef(captionStyles);
 
+  const zoomScaleRef = useRef(zoomScale);
+const translateXRef = useRef(translateX);
+const translateYRef = useRef(translateY);
+
   useEffect(() => { captionsRef.current = captions; }, [captions]);
   useEffect(() => { currentTimeRef.current = currentTime; }, [currentTime]);
   useEffect(() => { captionStylesRef.current = captionStyles; }, [captionStyles]);
+  useEffect(() => { zoomScaleRef.current = zoomScale; }, [zoomScale]);
+useEffect(() => { translateXRef.current = translateX; }, [translateX]);
+useEffect(() => { translateYRef.current = translateY; }, [translateY]);
 
   // Synchronize Active Subtitle Block ID
   useEffect(() => {
@@ -252,121 +259,191 @@ const [translateY, setTranslateY] = useState(0);
     }
   }, [currentTime, isPlaying, captions, videoSrc]);
 
-  // High Performance Canvas Interaction Sync Hook with Ref Pointers
-  useEffect(() => {
-    const canvasElement = previewCanvasRef.current;
-    if (!canvasElement) return;
+const handleViewportMouseDown = (e) => {
+  const canvasElement = previewCanvasRef.current;
+  if (!canvasElement) return;
 
-    let localIsDragging = false;
-    let dragConfig = null;
+  const activeCap = captionsRef.current.find(
+    c => currentTimeRef.current >= c.start && currentTimeRef.current <= c.end
+  );
+  
+  if (!activeCap || !activeCap._metaBoundingBox) return; 
 
-    const getCanvasRelativeCoords = (clientX, clientY) => {
-      const rect = canvasElement.getBoundingClientRect();
-      return {
-        canvasX: ((clientX - rect.left) / rect.width) * canvasElement.width,
-        canvasY: ((clientY - rect.top) / rect.height) * canvasElement.height,
-        viewportWidth: rect.width,
-        viewportHeight: rect.height
+  const { canvasX, canvasY, visualWidthUnscaled, visualHeightUnscaled } = getCanvasRelativeCoords(e.clientX, e.clientY);
+  const box = activeCap._metaBoundingBox;
+
+  if (
+    canvasX >= box.centerX - (box.width / 2) - 30 &&
+    canvasX <= box.centerX + (box.width / 2) + 30 &&
+    canvasY >= box.topY - 30 &&
+    canvasY <= box.bottomY + 30
+  ) {
+    // ✅ Hit Text: Intercept and handle text motion
+    localIsDragging = true;
+    if (typeof setIsDraggingText === 'function') setIsDraggingText(true);
+    canvasElement.setAttribute('data-dragging-active', 'true');
+    
+    dragConfig = {
+      captionId: activeCap.id,
+      initialXRel: activeCap.xRel !== undefined ? activeCap.xRel : 0.5,
+      initialYRel: activeCap.yRel !== undefined ? activeCap.yRel : 0.82,
+      startX: e.clientX,
+      startY: e.clientY,
+      visualWidthUnscaled,
+      visualHeightUnscaled
+    };
+    
+    e.preventDefault();
+    e.stopPropagation(); // Stop the event right here so the frame doesn't pan while moving text
+  }
+  // 💡 No else block: If we miss the text, the event bubbles naturally to the panning container
+};
+
+useEffect(() => {
+  const canvasElement = previewCanvasRef.current;
+  if (!canvasElement) return;
+
+  let localIsDragging = false;
+  let dragConfig = null;
+
+  const getCanvasRelativeCoords = (clientX, clientY) => {
+    const rect = canvasElement.getBoundingClientRect();
+    
+    // 1. Get the real CSS-unscaled size of the visual canvas element on screen
+    const currentScaleMultiplier = zoomScaleRef.current / 100;
+    const visualWidthUnscaled = rect.width / currentScaleMultiplier;
+    const visualHeightUnscaled = rect.height / currentScaleMultiplier;
+
+    // 2. Map coordinates relative to top-left of the bounding box, stripping out translation pans
+    const visualX = clientX - rect.left;
+    const visualY = clientY - rect.top;
+
+    const shiftedVisualX = (visualX - translateXRef.current) / currentScaleMultiplier;
+    const shiftedVisualY = (visualY - translateYRef.current) / currentScaleMultiplier;
+
+    // 3. Project positions perfectly into the internal 1080x1920 (or similar) resolution grid
+    const canvasX = (shiftedVisualX / visualWidthUnscaled) * canvasElement.width;
+    const canvasY = (shiftedVisualY / visualHeightUnscaled) * canvasElement.height;
+
+    return {
+      canvasX,
+      canvasY,
+      // Pass unscaled visual boundaries down to dragConfig to keep structural movement tracking smooth
+      visualWidthUnscaled,
+      visualHeightUnscaled
+    };
+  };
+
+  const onMouseDown = (e) => {
+    const activeCap = captionsRef.current.find(
+      c => currentTimeRef.current >= c.start && currentTimeRef.current <= c.end
+    );
+    
+    // IF NO ACTIVE TEXT EXISTS: Let the event bubble up naturally to your panning engine!
+    if (!activeCap || !activeCap._metaBoundingBox) return; 
+
+    const { canvasX, canvasY, visualWidthUnscaled, visualHeightUnscaled } = getCanvasRelativeCoords(e.clientX, e.clientY);
+    const box = activeCap._metaBoundingBox;
+
+    if (
+      canvasX >= box.centerX - (box.width / 2) - 30 &&
+      canvasX <= box.centerX + (box.width / 2) + 30 &&
+      canvasY >= box.topY - 30 &&
+      canvasY <= box.bottomY + 30
+    ) {
+      // ✅ We hit text! Lock the interaction to text dragging only.
+      localIsDragging = true;
+      if (typeof setIsDraggingText === 'function') setIsDraggingText(true);
+      canvasElement.setAttribute('data-dragging-active', 'true');
+      
+      dragConfig = {
+        captionId: activeCap.id,
+        initialXRel: activeCap.xRel !== undefined ? activeCap.xRel : 0.5,
+        initialYRel: activeCap.yRel !== undefined ? activeCap.yRel : 0.82,
+        startX: e.clientX,
+        startY: e.clientY,
+        visualWidthUnscaled,
+        visualHeightUnscaled
       };
-    };
+      
+      e.preventDefault(); // Only prevent default behavior when actually moving text
+    } 
+    // 💡 NO ELSE BLOCK HERE. If the hit test fails, we don't call e.preventDefault(),
+    // allowing the click event to fall through to your video frame pan handler.
+  };
 
-    const onMouseDown = (e) => {
-      const activeCap = captionsRef.current.find(c => currentTimeRef.current >= c.start && currentTimeRef.current <= c.end);
-      if (!activeCap || !activeCap._metaBoundingBox) return;
+  const onMouseMove = (e) => {
+    if (!localIsDragging || !dragConfig) return;
 
-      const { canvasX, canvasY, viewportWidth, viewportHeight } = getCanvasRelativeCoords(e.clientX, e.clientY);
-      const box = activeCap._metaBoundingBox;
+    // Calculate mouse delta movement on screen
+    const currentDeltaX = e.clientX - dragConfig.startX;
+    const currentDeltaY = e.clientY - dragConfig.startY;
 
-      if (
-        canvasX >= box.centerX - (box.width / 2) - 30 &&
-        canvasX <= box.centerX + (box.width / 2) + 30 &&
-        canvasY >= box.topY - 30 &&
-        canvasY <= box.bottomY + 30
-      ) {
-        localIsDragging = true;
-        setIsDraggingText(true);
-        canvasElement.setAttribute('data-dragging-active', 'true');
-        
-        dragConfig = {
-          captionId: activeCap.id,
-          initialXRel: activeCap.xRel !== undefined ? activeCap.xRel : 0.5,
-          initialYRel: activeCap.yRel !== undefined ? activeCap.yRel : 0.82,
-          startX: e.clientX,
-          startY: e.clientY,
-          viewportWidth,
-          viewportHeight
-        };
-        
-        e.preventDefault();
-      }
-    };
+    // Incorporate current viewport zoom level directly into delta velocity calculations
+    const currentScaleMultiplier = zoomScaleRef.current / 100;
+    
+    const changeXRel = (currentDeltaX / currentScaleMultiplier) / dragConfig.visualWidthUnscaled;
+    const changeYRel = (currentDeltaY / currentScaleMultiplier) / dragConfig.visualHeightUnscaled;
 
-    const onMouseMove = (e) => {
-      if (!localIsDragging || !dragConfig) return;
+    const targetCaption = captionsRef.current.find(item => item.id === dragConfig.captionId);
+    if (targetCaption) {
+      targetCaption.xRel = Math.max(0.05, Math.min(0.95, dragConfig.initialXRel + changeXRel));
+      targetCaption.yRel = Math.max(0.10, Math.min(0.98, dragConfig.initialYRel + changeYRel));
+    }
 
+    const ctx = canvasElement.getContext('2d');
+    if (videoRef.current) {
+      ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+      renderCaptionFrame(ctx, canvasElement, videoRef.current, captionsRef.current, captionStylesRef.current);
+    }
+  };
+
+  const onMouseUp = (e) => {
+    if (localIsDragging && dragConfig) {
       const currentDeltaX = e.clientX - dragConfig.startX;
       const currentDeltaY = e.clientY - dragConfig.startY;
 
-      const changeXRel = currentDeltaX / dragConfig.viewportWidth;
-      const changeYRel = currentDeltaY / dragConfig.viewportHeight;
+      const currentScaleMultiplier = zoomScaleRef.current / 100;
+      const changeXRel = (currentDeltaX / currentScaleMultiplier) / dragConfig.visualWidthUnscaled;
+      const changeYRel = (currentDeltaY / currentScaleMultiplier) / dragConfig.visualHeightUnscaled;
 
-      const targetCaption = captionsRef.current.find(item => item.id === dragConfig.captionId);
-      if (targetCaption) {
-        targetCaption.xRel = Math.max(0.05, Math.min(0.95, dragConfig.initialXRel + changeXRel));
-        targetCaption.yRel = Math.max(0.10, Math.min(0.98, dragConfig.initialYRel + changeYRel));
-      }
+      const finalX = Math.max(0.05, Math.min(0.95, dragConfig.initialXRel + changeXRel));
+      const finalY = Math.max(0.10, Math.min(0.98, dragConfig.initialYRel + changeYRel));
+      
+      const targetId = dragConfig.captionId;
 
-      const ctx = canvasElement.getContext('2d');
-      if (videoRef.current) {
-        ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-        renderCaptionFrame(ctx, canvasElement, videoRef.current, captionsRef.current, captionStylesRef.current);
-      }
-    };
+      localIsDragging = false;
+      if (typeof setIsDraggingText === 'function') setIsDraggingText(false);
+      dragConfig = null;
+      canvasElement.removeAttribute('data-dragging-active');
 
-    const onMouseUp = (e) => {
-      if (localIsDragging && dragConfig) {
-        const currentDeltaX = e.clientX - dragConfig.startX;
-        const currentDeltaY = e.clientY - dragConfig.startY;
-
-        const changeXRel = currentDeltaX / dragConfig.viewportWidth;
-        const changeYRel = currentDeltaY / dragConfig.viewportHeight;
-
-        const finalX = Math.max(0.05, Math.min(0.95, dragConfig.initialXRel + changeXRel));
-        const finalY = Math.max(0.10, Math.min(0.98, dragConfig.initialYRel + changeYRel));
+      setCaptions(prev => {
+        const updated = prev.map(item => item.id === targetId ? { ...item, xRel: finalX, yRel: finalY } : item);
         
-        const targetId = dragConfig.captionId;
+        setTimeout(() => {
+          const ctx = canvasElement.getContext('2d');
+          if (videoRef.current) {
+            ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            renderCaptionFrame(ctx, canvasElement, videoRef.current, updated, captionStylesRef.current);
+          }
+        }, 0);
 
-        localIsDragging = false;
-        setIsDraggingText(false);
-        dragConfig = null;
-        canvasElement.removeAttribute('data-dragging-active');
+        return updated;
+      });
+    }
+  };
 
-        setCaptions(prev => {
-          const updated = prev.map(item => item.id === targetId ? { ...item, xRel: finalX, yRel: finalY } : item);
-          
-          setTimeout(() => {
-            const ctx = canvasElement.getContext('2d');
-            if (videoRef.current) {
-              ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-              renderCaptionFrame(ctx, canvasElement, videoRef.current, updated, captionStylesRef.current);
-            }
-          }, 0);
+  canvasElement.addEventListener('mousedown', onMouseDown);
+  window.addEventListener('mousemove', onMouseMove);
+  window.addEventListener('mouseup', onMouseUp);
 
-          return updated;
-        });
-      }
-    };
+  return () => {
+    canvasElement.removeEventListener('mousedown', onMouseDown);
+    window.removeEventListener('mousemove', onMouseMove);
+    window.removeEventListener('mouseup', onMouseUp);
+  };
+}, []);
 
-    canvasElement.addEventListener('mousedown', onMouseDown);
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
-
-    return () => {
-      canvasElement.removeEventListener('mousedown', onMouseDown);
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
-    };
-  }, []);
 
   // Standard cleanup loop for blob tracking structures
   useEffect(() => {
@@ -763,6 +840,17 @@ const handleExportVideo = async () => {
   renderNextFrame();
 };
 
+// Add these mappings right before your return (...) block in App.jsx:
+const handleTimeUpdate = (e) => {
+  if (!videoRef.current) return;
+  setCurrentTime(videoRef.current.currentTime);
+};
+
+const handleLoadedMetadata = (e) => {
+  if (!videoRef.current) return;
+  setDuration(videoRef.current.duration);
+};
+
   const currentActiveCaption = captions.find(c => c.id === activeId);
   const activeViewportStyles = currentActiveCaption ? {
     fontFamily: currentActiveCaption.fontFamily || captionStyles.fontFamily,
@@ -794,19 +882,31 @@ const handleExportVideo = async () => {
         <main className="flex-1 flex flex-col bg-zinc-950 overflow-hidden min-w-0">
           <div className="flex-1 grid grid-cols-1 lg:grid-cols-5 p-6 gap-6 min-h-0 relative overflow-hidden">
             <div className={`lg:col-span-4 min-h-0 flex flex-col relative ${isDraggingText ? 'cursor-grabbing' : ''}`}>
-              <VideoViewport 
-                videoSrc={videoSrc} videoRef={videoRef} previewCanvasRef={previewCanvasRef} 
-                zoomScale={zoomScale}
+<VideoViewport 
+  videoSrc={videoSrc}
+  videoRef={videoRef}
+  isPlaying={isPlaying}
+  currentTime={currentTime}
+  duration={duration}
+  
+  // Ensure this prop points to a valid local function variable name now
+  onTogglePlay={handleTogglePlay} 
+  onTimeUpdate={handleTimeUpdate}        
+  onLoadedMetadata={handleLoadedMetadata}
+  zoomScale={zoomScale}
   translateX={translateX}
   translateY={translateY}
-  onZoomChange={handleZoomChange}
-  onPanChange={handlePanChange}
+  onZoomChange={setZoomScale}
+  onPanChange={(x, y) => {
+    setTranslateX(x);
+    setTranslateY(y);
+  }}
   handleResetView={handleResetView}
-                isPlaying={isPlaying} currentTime={currentTime} duration={duration} activeCaption={currentActiveCaption} captions={captions} captionStyles={activeViewportStyles} onTogglePlay={handleTogglePlay}
-                onTimeUpdate={() => setCurrentTime(videoRef.current?.currentTime || 0)}
-                onLoadedMetadata={() => setDuration(videoRef.current?.duration || 0)}
-                setCaptions={setCaptions}
-              />
+  previewCanvasRef={previewCanvasRef}
+  captions={captions}
+  captionStyles={captionStyles}
+  setCaptions={setCaptions}
+/>
             </div>
 
             {/* Config Panel Right Column */}
