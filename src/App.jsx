@@ -253,7 +253,7 @@ const isTimelineResizingRef = useRef(false);
       const newHeight = startHeight - deltaY;
 
       // 🔒 Define your explicit absolute Min and Max bounds here:
-      if (newHeight >= 120 && newHeight <= 220) {
+      if (newHeight >= 50 && newHeight <= 220) {
         setTimelineHeight(newHeight);
       }
     };
@@ -555,7 +555,10 @@ const handleTimelineSeek = (time) => {
 
       // Find the caption enclosing the clicked timeline timestamp
       const targetedCaption = captions.find(c => time >= c.start && time <= c.end);
+      setCurrentTime(time);
 
+  // 2. ⚡ New: Instantly activate the correct text box and sidebar block
+      syncActiveCaptionFromTime(time);
       if (targetedCaption) {
         // Set it as the active and selected caption in your configuration block
         setActiveId(targetedCaption.id);
@@ -591,6 +594,39 @@ const handleTimelineSeek = (time) => {
       }
     }
   };
+
+  const syncActiveCaptionFromTime = (time, currentCaptions = captions) => {
+  // 1. Find the caption block that wraps around the current playhead time
+  const matchingCaption = currentCaptions.find(
+    c => time >= c.start && time <= c.end
+  );
+
+  if (matchingCaption) {
+    // 2. Automatically activate and highlight it across both panels
+    setActiveId(matchingCaption.id);
+    setSelectedIds([matchingCaption.id]);
+
+    // 3. Keep style presets synchronized in the right custom styles builder panel
+    setCaptionStyles(prev => ({
+      ...prev,
+      fontFamily: matchingCaption.fontFamily || 'Impact, Arial Black, sans-serif',
+      fontSize: matchingCaption.fontSize || '48px',
+      fontWeight: matchingCaption.fontWeight || '900',
+      fontStyle: matchingCaption.fontStyle || 'normal',
+      color: matchingCaption.color || '#fbbf24',
+      textTransform: matchingCaption.textTransform || 'uppercase',
+      strokeColor: matchingCaption.strokeColor || '#000000',
+      strokeWidth: matchingCaption.strokeWidth !== undefined ? matchingCaption.strokeWidth : 0.14,
+      shadow: matchingCaption.shadow !== undefined ? matchingCaption.shadow : true,
+      underline: matchingCaption.underline !== undefined ? matchingCaption.underline : false,
+      strike: matchingCaption.strike !== undefined ? matchingCaption.strike : false,
+    }));
+  } else {
+    // Clear active highlight states if scrubbing into an empty gap containing no text
+    setActiveId(null);
+    setSelectedIds([]);
+  }
+};
 
   const handleUpdateCaption = (id, field, value) => {
     setCaptions(prev => prev.map(c => c.id === id ? { ...c, [field]: value } : c));
@@ -914,7 +950,11 @@ const handleExportVideo = async () => {
 // Add these mappings right before your return (...) block in App.jsx:
 const handleTimeUpdate = (e) => {
   if (!videoRef.current) return;
-  setCurrentTime(videoRef.current.currentTime);
+  const newTime = videoRef.current.currentTime;
+  setCurrentTime(newTime);
+
+  // Keep tracking positions highlighted dynamically while video rolls forward frame-by-frame
+  syncActiveCaptionFromTime(newTime);
 };
 
 const handleLoadedMetadata = (e) => {
