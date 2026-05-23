@@ -487,14 +487,18 @@ useEffect(() => {
   }, [videoSrc]);
 
   // Frame monitoring hook running layout passes when video parameters shift
-  useEffect(() => {
-    const canvas = previewCanvasRef.current;
-    const video = videoRef.current;
-    if (canvas && video) {
-      const ctx = canvas.getContext('2d');
+// Frame monitoring hook running layout passes when video parameters shift
+useEffect(() => {
+  const canvas = previewCanvasRef.current;
+  const video = videoRef.current;
+  if (canvas && video) {
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
       renderCaptionFrame(ctx, canvas, video, captions, captionStyles);
     }
-  }, [currentTime, captions, captionStyles]);
+  }
+}, [currentTime, captions, captionStyles, activeId, selectedIds]); // 🌟 Added activeId and selectedIds here!
 
   useEffect(() => {
   let animId;
@@ -623,33 +627,66 @@ const handleTimelineSeek = (time) => {
     document.addEventListener('mouseup', handleMouseUp);
   };
 
-  const handleSelectCaption = (id) => {
-    setSelectedIds([id]);
-    setActiveId(id);
-    
-    const targeted = captions.find(c => c.id === id);
-    if (targeted && videoRef.current) {
-      videoRef.current.currentTime = targeted.start;
-      setCurrentTime(targeted.start);
-    }
+const handleSelectCaption = (id) => {
+  setSelectedIds([id]);
+  setActiveId(id);
+  
+  const targeted = captions.find(c => c.id === id);
+  
+  // Create the updated style state configuration locally so we can use it immediately
+  let nextStyles = { ...captionStyles };
+  if (targeted) {
+    nextStyles = {
+      ...captionStyles,
+      fontFamily: targeted.fontFamily || 'Impact, Arial Black, sans-serif',
+      fontSize: targeted.fontSize || '48px',
+      fontWeight: targeted.fontWeight || '900',
+      fontStyle: targeted.fontStyle || 'normal',
+      color: targeted.color || '#fbbf24',
+      textTransform: targeted.textTransform || 'uppercase',
+      strokeColor: targeted.strokeColor || '#000000',
+      strokeWidth: targeted.strokeWidth !== undefined ? targeted.strokeWidth : 0.14,
+      shadow: targeted.shadow !== undefined ? targeted.shadow : true,
+      underline: targeted.underline !== undefined ? targeted.underline : false,
+      strike: targeted.strike !== undefined ? targeted.strike : false,
+    };
+    setCaptionStyles(nextStyles);
+  }
 
-    if (targeted) {
-      setCaptionStyles(prev => ({
-        ...prev,
-        fontFamily: targeted.fontFamily || 'Impact, Arial Black, sans-serif',
-        fontSize: targeted.fontSize || '48px',
-        fontWeight: targeted.fontWeight || '900',
-        fontStyle: targeted.fontStyle || 'normal',
-        color: targeted.color || '#fbbf24',
-        textTransform: targeted.textTransform || 'uppercase',
-        strokeColor: targeted.strokeColor || '#000000',
-        strokeWidth: targeted.strokeWidth !== undefined ? targeted.strokeWidth : 0.14,
-        shadow: targeted.shadow !== undefined ? targeted.shadow : true,
-        underline: targeted.underline !== undefined ? targeted.underline : false,
-        strike: targeted.strike !== undefined ? targeted.strike : false,
-      }));
-    }
-  };
+  if (targeted && videoRef.current) {
+    const video = videoRef.current;
+
+    // ⚡ SAFE HARDWARE-SEEKED PAINTER:
+    // Define a secure, temporary callback that triggers ONLY when the frame is ready
+    const handleVideoSeekComplete = () => {
+      const canvas = previewCanvasRef.current;
+      if (canvas) {
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          
+          // Draw using fresh configurations and the newly active ID tracking parameters
+          renderCaptionFrame(
+            ctx, 
+            canvas, 
+            video, 
+            captionsRef.current || captions, 
+            nextStyles
+          );
+        }
+      }
+      // Remove the listener immediately so it doesn't fire during regular video playback
+      video.removeEventListener('seeked', handleVideoSeekComplete);
+    };
+
+    // Attach the event listener right before shifting the timestamp position
+    video.addEventListener('seeked', handleVideoSeekComplete);
+    
+    // Jump the hardware video playhead to the target timestamp position
+    video.currentTime = targeted.start;
+    setCurrentTime(targeted.start);
+  }
+};
 
   const handleCustomStyleChange = (field, value) => {
     setCaptionStyles(prev => ({ ...prev, preset: 'custom', [field]: value }));
