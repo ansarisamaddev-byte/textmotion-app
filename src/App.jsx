@@ -222,6 +222,7 @@ const [translateY, setTranslateY] = useState(0);
   const captionsRef = useRef(captions);
   const currentTimeRef = useRef(currentTime);
   const captionStylesRef = useRef(captionStyles);
+  const isExportingRef = useRef(false);
 
   const zoomScaleRef = useRef(zoomScale);
 const translateXRef = useRef(translateX);
@@ -233,6 +234,7 @@ const translateYRef = useRef(translateY);
   useEffect(() => { zoomScaleRef.current = zoomScale; }, [zoomScale]);
   useEffect(() => { translateXRef.current = translateX; }, [translateX]);
   useEffect(() => { translateYRef.current = translateY; }, [translateY]);
+  
 
 const [timelineHeight, setTimelineHeight] = useState(220); // Default height in pixels
 const isResizingRef = useRef(false);
@@ -772,6 +774,7 @@ const handleSelectCaption = (id) => {
 const handleExportVideo = async () => {
   if (!videoSrc || !videoRef.current) return;
 
+  isExportingRef.current = true; // Activate the processing flag
   setIsExporting(true);
   setExportProgress(0);
   setExportStatusText("Extracting clean audio track...");
@@ -779,172 +782,151 @@ const handleExportVideo = async () => {
   const mainVideo = videoRef.current;
   const nativeWidth = mainVideo.videoWidth || 1080;
   const nativeHeight = mainVideo.videoHeight || 1920;
-
   const originalTime = mainVideo.currentTime;
   const originalMuted = mainVideo.muted;
 
   mainVideo.pause();
 
-  // 1. Setup MP4 Muxer for dual-stream rendering
   const muxer = new Muxer({
     target: new ArrayBufferTarget(),
-    video: {
-      codec: 'avc',
-      width: nativeWidth,
-      height: nativeHeight
-    },
-    audio: {
-      codec: 'aac',
-      numberOfChannels: 2,
-      sampleRate: 44100
-    },
+    video: { codec: 'avc', width: nativeWidth, height: nativeHeight },
+    audio: { codec: 'aac', numberOfChannels: 2, sampleRate: 44100 },
     fastStart: 'fragmented'
   });
 
-  // 2. Configure Hardware Encoders
   const videoEncoder = new VideoEncoder({
     output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
     error: (e) => console.error("Video encoder error:", e)
   });
-  await videoEncoder.configure({
-    codec: 'avc1.4d002a',
-    width: nativeWidth,
-    height: nativeHeight,
-    bitrate: 8000000,
-    framerate: 30,
-    latencyMode: 'quality'
-  });
+  await videoEncoder.configure({ codec: 'avc1.4d002a', width: nativeWidth, height: nativeHeight, bitrate: 8000000, framerate: 30, latencyMode: 'quality' });
 
   const audioEncoder = new AudioEncoder({
     output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
     error: (e) => console.error("Audio encoder error:", e)
   });
-  await audioEncoder.configure({
-    codec: 'mp4a.40.2', // Standard low-complexity AAC profile
-    numberOfChannels: 2,
-    sampleRate: 44100,
-    bitrate: 192000
-  });
+  await audioEncoder.configure({ codec: 'mp4a.40.2', numberOfChannels: 2, sampleRate: 44100, bitrate: 192000 });
 
-  // 3. Extract and Parse Pure Audio Track (FIXES ROBOTIC DISTORTION)
+  // Audio Processing...
   try {
     const response = await fetch(videoSrc);
     const arrayBuffer = await response.arrayBuffer();
-    const temporaryAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    const decodedAudioBuffer = await temporaryAudioCtx.decodeAudioData(arrayBuffer);
-    temporaryAudioCtx.close();
-
-    const totalAudioSamples = Math.floor(duration * 44100);
-    const offlineCtx = new OfflineAudioContext(2, totalAudioSamples, 44100);
-    
-    const bufferSource = offlineCtx.createBufferSource();
-    bufferSource.buffer = decodedAudioBuffer;
-    bufferSource.connect(offlineCtx.destination);
-    bufferSource.start(0);
-    
-    const renderedBuffer = await offlineCtx.startRendering();
-
-    const sampleLength = renderedBuffer.length;
-    const leftData = renderedBuffer.getChannelData(0);
-    const rightData = renderedBuffer.getChannelData(1);
-    
-    // Allocate a continuous allocation block big enough for both channels
-    const audioDataBuffer = new Float32Array(sampleLength * 2);
-    
-    // WebCodecs 'f32-planar' expects all Left samples, then all Right samples sequentially
-    audioDataBuffer.set(leftData, 0);
-    audioDataBuffer.set(rightData, sampleLength);
-
+    const tempCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const decoded = await tempCtx.decodeAudioData(arrayBuffer);
+    tempCtx.close();
+    const offlineCtx = new OfflineAudioContext(2, Math.floor(duration * 44100), 44100);
+    const source = offlineCtx.createBufferSource();
+    source.buffer = decoded;
+    source.connect(offlineCtx.destination);
+    source.start(0);
+    const rendered = await offlineCtx.startRendering();
+    const len = rendered.length;
     const audioDataBlock = new AudioData({
-      format: 'f32-planar', // Explicitly keep it in clean planar layout structure
+      format: 'f32-planar',
       sampleRate: 44100,
-      numberOfFrames: sampleLength,
+      numberOfFrames: len,
       numberOfChannels: 2,
       timestamp: 0,
-      data: audioDataBuffer
+      data: new Float32Array([...rendered.getChannelData(0), ...rendered.getChannelData(1)])
     });
-
     audioEncoder.encode(audioDataBlock);
     audioDataBlock.close();
-  } catch (audioErr) {
-    console.warn("Direct source audio parsing failed, falling back to silent track:", audioErr);
-  }
+  } catch (e) { console.warn("Audio extraction skipped", e); }
 
-  // 4. Run the High-Quality Video Frame Rendering Loop (FIXES BLUR)
   const exportCanvas = document.createElement('canvas');
-  exportCanvas.width = nativeWidth;
-  exportCanvas.height = nativeHeight;
+  exportCanvas.width = nativeWidth; exportCanvas.height = nativeHeight;
   const exportCtx = exportCanvas.getContext('2d');
 
   let frameCount = 0;
   const fps = 30;
-  const frameDurationInMicroseconds = 1000000 / fps;
 
   const renderNextFrame = async () => {
-    const currentFrameTimeInSeconds = frameCount / fps;
-
-    if (currentFrameTimeInSeconds >= duration) {
-      setExportStatusText("Compiling final video tracks...");
-      await videoEncoder.flush();
-      await audioEncoder.flush();
-      muxer.finalize();
-
-      const buffer = muxer.target.buffer;
-      const finalMp4Blob = new Blob([buffer], { type: 'video/mp4' });
-
-      const url = URL.createObjectURL(finalMp4Blob);
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = `textmotion-hd-render-${Date.now()}.mp4`;
-      document.body.appendChild(anchor);
-      anchor.click();
-      document.body.removeChild(anchor);
-      URL.revokeObjectURL(url);
-
+    // 🛑 KILL SWITCH CHECK
+    if (!isExportingRef.current) {
+      videoEncoder.close();
+      audioEncoder.close();
       mainVideo.currentTime = originalTime;
-      mainVideo.muted = originalMuted;
-      setIsExporting(false);
-      setExportStatusText("");
       return;
     }
 
-    mainVideo.currentTime = currentFrameTimeInSeconds;
+    const currentFrameTime = frameCount / fps;
 
-    // Wait completely for the hardware seek and frame decoder pipeline to catch up
+    if (currentFrameTime >= duration) {
+      setExportStatusText("Compiling final video...");
+      await videoEncoder.flush();
+      await audioEncoder.flush();
+      muxer.finalize();
+      
+      const blob = new Blob([muxer.target.buffer], { type: 'video/mp4' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `render-${Date.now()}.mp4`;
+      a.click();
+      URL.revokeObjectURL(url);
+      
+      mainVideo.currentTime = originalTime;
+      setIsExporting(false);
+      return;
+    }
+
+    mainVideo.currentTime = currentFrameTime;
+
     await new Promise((resolve) => {
       if ('requestVideoFrameCallback' in mainVideo) {
         mainVideo.requestVideoFrameCallback(() => resolve());
       } else {
         const onSeeked = () => {
           mainVideo.removeEventListener('seeked', onSeeked);
-          setTimeout(resolve, 40); // 40ms pad clears out any remaining GPU rendering blur
+          setTimeout(resolve, 40);
         };
         mainVideo.addEventListener('seeked', onSeeked);
       }
     });
 
-    // Draw sharp frame onto canvas layer
     renderCaptionFrame(exportCtx, exportCanvas, mainVideo, captions, captionStyles);
 
-    const timestampInMicroseconds = frameCount * frameDurationInMicroseconds;
     const frameInstance = new VideoFrame(exportCanvas, {
-      timestamp: timestampInMicroseconds,
-      duration: frameDurationInMicroseconds
+      timestamp: frameCount * (1000000 / fps),
+      duration: 1000000 / fps
     });
 
     videoEncoder.encode(frameInstance, { keyFrame: frameCount % 90 === 0 });
     frameInstance.close();
 
-    const progressPercent = Math.floor((currentFrameTimeInSeconds / duration) * 100);
-    setExportProgress(progressPercent);
-    setExportStatusText(`Rendering crisp frames: ${progressPercent}%`);
+    const p = Math.floor((currentFrameTime / duration) * 100);
+    setExportProgress(p);
+    setExportStatusText(`Rendering: ${p}%`);
 
     frameCount++;
-    setTimeout(renderNextFrame, 5); 
+    setTimeout(renderNextFrame, 5);
   };
 
-  // Launch video parsing runtime stack
   renderNextFrame();
+};
+
+const handleCancelExport = () => {
+  // 1. Hide the modal overlay visually
+  setIsExporting(false);
+  setExportProgress(0);
+
+  // 2. CASE A: If you are using an explicit loop controller flag
+  // Ensure your export loop checks this ref flag on every frame execution step!
+  if (isExportingRef) {
+    isExportingRef.current = false;
+  }
+
+  // 3. CASE B: If your video export runs inside a background Web Worker
+  // Calling terminate kills the thread hardware immediately
+  if (exportWorkerRef && exportWorkerRef.current) {
+    exportWorkerRef.current.terminate();
+    exportWorkerRef.current = null; // Reset reference
+    console.log("Export worker process terminated cleanly.");
+  }
+
+  // 4. CASE C: If you are using requestAnimationFrame or a setTimeout loop
+  if (exportFrameIdRef && exportFrameIdRef.current) {
+    cancelAnimationFrame(exportFrameIdRef.current);
+    // or clearTimeout(exportFrameIdRef.current);
+  }
 };
 
 // Add these mappings right before your return (...) block in App.jsx:
@@ -979,8 +961,8 @@ const handleLoadedMetadata = (e) => {
     yRel: currentActiveCaption.yRel !== undefined ? currentActiveCaption.yRel : 0.82
   } : captionStyles;
 
-return (
-    <div className="flex flex-col h-screen bg-zinc-950 text-zinc-100 font-sans select-none overflow-hidden">
+  return (
+    <div className="flex flex-col h-screen bg-zinc-950 text-zinc-100 font-sans select-none overflow-hidden relative">
       <WorkspaceHeader onVideoUpload={handleVideoUpload} onExport={handleExportVideo} isExporting={isExporting} exportProgress={exportProgress} hasVideo={!!videoSrc} />
 
       <div className="flex flex-1 overflow-hidden w-full relative">
@@ -1117,18 +1099,16 @@ return (
           </div>
 
           {/* ─── 📥 DYNAMIC RESIZABLE TIMELINE FOOTER ─── */}
-          {/* Removed h-[220px] and replaced with live variable height + relative positioning */}
           <div 
             style={{ height: `${timelineHeight}px` }} 
             className="shrink-0 w-full bg-zinc-900 overflow-hidden relative border-t border-zinc-800/80 flex flex-col min-h-0"
           >
-            {/* ↕️ THE RESIZER GHOST HANDLE: Placed on the very top edge of the track panel */}
+            {/* ↕️ THE RESIZER GHOST HANDLE */}
             <div
               onMouseDown={handleTimelineResizeStart}
               className="absolute top-0 left-0 right-0 h-1.5 cursor-ns-resize bg-transparent hover:bg-indigo-500/60 transition-colors duration-150 z-50"
             />
             
-            {/* Timeline element inside its layout flex track */}
             <div className="flex-1 min-h-0 w-full">
               <TimelineTrack 
                 videoSrc={videoSrc} 
@@ -1139,12 +1119,63 @@ return (
                 selectedIds={selectedIds} 
                 onSelectCaption={handleSelectCaption} 
                 onSeek={handleTimelineSeek}
-                timelineHeight={timelineHeight} // Passed securely into your timeline track elements
+                timelineHeight={timelineHeight}
               />       
             </div>
           </div>
         </main>
       </div>
+
+      {/* ─── 🔒 GLOBAL EXPORT BLOCKING OVERLAY WITH CANCEL ─── */}
+      {isExporting && (
+        <div className="absolute inset-0 bg-zinc-950/75 backdrop-blur-xs z-[9999] flex flex-col items-center justify-center">
+          
+          {/* Glassmorphic Loader Container */}
+          <div className="bg-zinc-900/95 border border-zinc-800/80 p-8 rounded-2xl shadow-2xl max-w-sm w-full mx-4 flex flex-col items-center text-center gap-5">
+            
+            {/* Circular Progress Ring Indicator */}
+            <div className="relative w-16 h-16 flex items-center justify-center">
+              <div className="absolute inset-0 rounded-full border-4 border-zinc-800 border-t-indigo-500 animate-spin" />
+              <span className="text-sm font-mono font-bold text-indigo-400">
+                {exportProgress}%
+              </span>
+            </div>
+
+            {/* Status Metadata Strings */}
+            <div className="space-y-1.5">
+              <h3 className="text-sm font-bold text-zinc-100 tracking-wide uppercase">
+                Exporting Project Video
+              </h3>
+              <p className="text-xs text-zinc-400 max-w-[240px]">
+                Compiling frame matrices and merging dynamic graphic overlay text tracks...
+              </p>
+            </div>
+
+            {/* Realtime Action Tracking Bar */}
+            <div className="w-full bg-zinc-950 rounded-full h-1.5 border border-zinc-800/50 p-0.5 overflow-hidden">
+              <div 
+                style={{ width: `${exportProgress}%` }}
+                className="bg-gradient-to-r from-indigo-500 to-purple-500 h-full rounded-full transition-all duration-300 ease-out"
+              />
+            </div>
+            
+            {/* 🛑 CANCEL EXPORT INTERACTION HANDLE */}
+<button
+  type="button"
+  onClick={handleCancelExport} // ⚡ Cleanly terminates background rendering threads
+  className="mt-1 px-4 py-2 text-xs font-semibold text-zinc-400 hover:text-zinc-200 bg-zinc-950/60 hover:bg-zinc-950 border border-zinc-800 hover:border-zinc-700 rounded-lg transition active:scale-95 cursor-pointer"
+>
+  Cancel Export
+</button>
+            
+            <span className="text-[10px] uppercase font-bold text-zinc-500 tracking-widest animate-pulse mt-1">
+              Please keep this tab open
+            </span>
+          </div>
+
+        </div>
+      )}
     </div>
   );
+  
 }
