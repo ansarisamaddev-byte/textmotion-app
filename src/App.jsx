@@ -200,7 +200,7 @@ const [canUndo, setCanUndo] = useState(false);
 const [canRedo, setCanRedo] = useState(false);
 
 const updateStackStatus = () => {
-  console.log(undoStack.current.length, redoStack.current.length);
+  console.log('[Undo] Stack status - Undo stack length:', undoStack.current.length, 'Redo stack length:', redoStack.current.length);
   setCanUndo(undoStack.current.length > 0);
   setCanRedo(redoStack.current.length > 0);
 };
@@ -245,67 +245,109 @@ const videoRef = useRef(null);
   useEffect(() => { translateYRef.current = translateY; }, [translateY]);
 
 
-  const [timelineHeight, setTimelineHeight] = useState(220); // Default height in pixels
+  const [timelineHeight, setTimelineHeight] = useState(220);
   const isResizingRef = useRef(false);
   const isTimelineResizingRef = useRef(false);
 
-  const getSnapshot = () => ({
-    captions: JSON.parse(JSON.stringify(captionsRef.current)),
-    styles: JSON.parse(JSON.stringify(captionStylesRef.current)),
-    activeId,
-    selectedIds,
-    currentTime: videoRef.current?.currentTime || 0
-  });
+const getSnapshot = () => ({
+  captions: captions.map(c => ({ ...c })), // Safer than JSON.stringify for arrays
+  styles: { ...captionStyles },
+  activeId,
+  selectedIds,
+  currentTime: videoRef.current ? videoRef.current.currentTime : currentTime
+});
 
   const areSnapshotsEqual = (left, right) => {
     if (!left || !right) return false;
-    if (left.activeId !== right.activeId) return false;
-    if (left.currentTime !== right.currentTime) return false;
-    if (left.selectedIds.length !== right.selectedIds.length) return false;
-    for (let i = 0; i < left.selectedIds.length; i += 1) {
-      if (left.selectedIds[i] !== right.selectedIds[i]) return false;
-    }
-    return JSON.stringify(left.captions) === JSON.stringify(right.captions)
-      && JSON.stringify(left.styles) === JSON.stringify(right.styles);
+    return JSON.stringify(left) === JSON.stringify(right);
   };
 
-  const pushHistorySnapshot = () => {
-    const nextSnapshot = getSnapshot();
-    const lastSnapshot = undoStack.current[undoStack.current.length - 1];
-    if (areSnapshotsEqual(lastSnapshot, nextSnapshot)) return;
+  // Record state BEFORE making changes (Clipchamp style)
+const recordUndo = () => {
+  const currentSnapshot = getSnapshot();
+  const lastSnapshot = undoStack.current[undoStack.current.length - 1];
 
-    undoStack.current.push(nextSnapshot);
-    redoStack.current = [];
+  // If there is no last snapshot, or if the current state is different, record it.
+  if (!lastSnapshot || !areSnapshotsEqual(lastSnapshot, currentSnapshot)) {
+    undoStack.current.push(currentSnapshot);
+    // Crucial: Clear redo stack whenever a new action is performed
+    redoStack.current = []; 
     updateStackStatus();
-  };
+  }
+};
 
   const dispatchChange = (newCaptions, newStyles) => {
-    pushHistorySnapshot();
+    recordUndo(); // Save state BEFORE change
     setCaptions(newCaptions);
     setCaptionStyles(newStyles);
   };
 
-  const applyState = (state) => {
-    setCaptions(state.captions);
-    setCaptionStyles(state.styles);
-    setActiveId(state.activeId || null);
-    setSelectedIds(state.selectedIds || []);
-    if (videoRef.current) videoRef.current.currentTime = state.currentTime;
-    currentTimeRef.current = state.currentTime;
-    setCurrentTime(state.currentTime);
+  const handleCaptionMove = (updatedCaptions) => {
+    dispatchChange(updatedCaptions, captionStylesRef.current);
   };
 
+const applyState = (state) => {
+  // 1. Update references first to prevent race conditions during render
+  captionsRef.current = state.captions;
+  currentTimeRef.current = state.currentTime;
+  
+  // 2. Batch React updates
+  setCaptions(state.captions);
+  setCaptionStyles(state.styles);
+  setActiveId(state.activeId);
+  setSelectedIds(state.selectedIds);
+  setCurrentTime(state.currentTime);
+
+  // 3. Force Video Sync
+  if (videoRef.current) {
+    // Setting currentTime is asynchronous; it will trigger the video onSeeked/onTimeUpdate
+    videoRef.current.currentTime = state.currentTime;
+  }
+};
+
   const handleUndo = () => {
-    if (undoStack.current.length === 0) return;
+    if (undoStack.current.length === 0) {
+      console.log('[Undo] handleUndo: no undo available');
+      return;
+    }
+    console.log('[Undo] handleUndo: undoing, current snapshot saved to redo', {
+      captions: getSnapshot().captions.map(c => ({ id: c.id, xRel: c.xRel, yRel: c.yRel })),
+      activeId: getSnapshot().activeId,
+      selectedIds: getSnapshot().selectedIds,
+      currentTime: getSnapshot().currentTime
+    });
     redoStack.current.push(getSnapshot());
-    applyState(undoStack.current.pop());
+    const previousState = undoStack.current.pop();
+    console.log('[Undo] handleUndo: applying previous state', {
+      captions: previousState.captions.map(c => ({ id: c.id, xRel: c.xRel, yRel: c.yRel })),
+      activeId: previousState.activeId,
+      selectedIds: previousState.selectedIds,
+      currentTime: previousState.currentTime
+    });
+    applyState(previousState);
     updateStackStatus();
   };
 
   const handleRedo = () => {
-    if (redoStack.current.length === 0) return;
+    if (redoStack.current.length === 0) {
+      console.log('[Redo] handleRedo: no redo available');
+      return;
+    }
+    console.log('[Redo] handleRedo: redoing, current snapshot saved to undo', {
+      captions: getSnapshot().captions.map(c => ({ id: c.id, xRel: c.xRel, yRel: c.yRel })),
+      activeId: getSnapshot().activeId,
+      selectedIds: getSnapshot().selectedIds,
+      currentTime: getSnapshot().currentTime
+    });
     undoStack.current.push(getSnapshot());
-    applyState(redoStack.current.pop());
+    const nextState = redoStack.current.pop();
+    console.log('[Redo] handleRedo: applying next state', {
+      captions: nextState.captions.map(c => ({ id: c.id, xRel: c.xRel, yRel: c.yRel })),
+      activeId: nextState.activeId,
+      selectedIds: nextState.selectedIds,
+      currentTime: nextState.currentTime
+    });
+    applyState(nextState);
     updateStackStatus();
   };
 
@@ -598,6 +640,28 @@ const videoRef = useRef(null);
     return () => cancelAnimationFrame(animId);
   }, []);
 
+  const handleInteractionEnd = (updatedCaptions) => {
+  // 1. Capture the snapshot BEFORE updating state
+  const previousState = getSnapshot(); 
+  
+  // 2. Push the OLD state to undoStack
+  undoStack.current.push(previousState);
+  redoStack.current = []; // Clear redo
+  updateStackStatus();
+  
+  // 3. Perform the update
+  setCaptions(updatedCaptions);
+};
+
+  useEffect(() => {
+  if (videoSrc && undoStack.current.length === 0) {
+    // Save the initial state immediately when the video is loaded
+    undoStack.current.push(getSnapshot());
+    updateStackStatus();
+    console.log('[Undo] Initial state recorded');
+  }
+}, [videoSrc]);
+
   const handleVideoUpload = (e) => {
     const file = e.target.files[0];
     if (file) {
@@ -627,7 +691,7 @@ const videoRef = useRef(null);
     const timeChanged = Math.abs(time - currentTimeValue) > 0.01;
 
     if (timeChanged || selectionChanged) {
-      pushHistorySnapshot();
+      recordUndo();
     }
 
     if (videoRef.current) {
@@ -730,9 +794,8 @@ const handleAddBlock = () => {
 
   const handleSelectCaption = (id) => {
     if (id !== activeId || selectedIds[0] !== id) {
-      pushHistorySnapshot();
+      recordUndo();
     }
-
     setSelectedIds([id]);
     setActiveId(id);
 
@@ -1041,7 +1104,7 @@ const setThemePreset = (preset) => {
                 previewCanvasRef={previewCanvasRef}
                 captions={captions}
                 captionStyles={captionStyles}
-                setCaptions={setCaptions}
+                onCaptionMove={handleCaptionMove}
                 onUndo={handleUndo}
                 onRedo={handleRedo}
                 canUndo={canUndo}

@@ -26,7 +26,7 @@ export default function VideoViewport({
   onZoomChange,   
   onPanChange,    
   handleResetView,
-  setCaptions       
+  onCaptionMove      
 }) {
   const isViewportDraggingRef = useRef(false);
   
@@ -111,6 +111,8 @@ export default function VideoViewport({
     };
   };
 
+  let previewCaptions = null;
+
   const handleCanvasMouseDown = (e) => {
   const canvas = previewCanvasRef.current;
   const container = e.currentTarget; 
@@ -129,7 +131,7 @@ export default function VideoViewport({
 
     if (isWithinX && isWithinY) {
       e.preventDefault();
-      
+      previewCaptions = captionsRef.current.map(item => ({ ...item }));
       textDragConfig.current = {
         captionId: activeCap.id,
         initialXRel: activeCap.xRel !== undefined ? activeCap.xRel : 0.5,
@@ -174,7 +176,7 @@ const handleGlobalMouseMove = (e) => {
     const calculatedX = Math.max(0.01, Math.min(0.99, config.initialXRel + changeXRel));
     const calculatedY = Math.max(0.01, Math.min(0.99, config.initialYRel + changeYRel));
 
-    const activeCap = captionsRef.current?.find(c => c.id === config.captionId);
+    const activeCap = previewCaptions?.find(c => c.id === config.captionId);
     if (activeCap) {
       activeCap.xRel = calculatedX;
       activeCap.yRel = calculatedY;
@@ -182,7 +184,7 @@ const handleGlobalMouseMove = (e) => {
 
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    renderCaptionFrame(ctx, canvas, video, captionsRef.current || [], captionStyles);
+    renderCaptionFrame(ctx, canvas, video, previewCaptions || [], captionStyles);
     
   // ✅ Read directly from the instant pointer ref value now
   } else if (isViewportDraggingRef.current) {
@@ -210,14 +212,19 @@ const handleGlobalMouseUp = (e) => {
     const calculatedX = Math.max(0.01, Math.min(0.99, config.initialXRel + changeXRel));
     const calculatedY = Math.max(0.01, Math.min(0.99, config.initialYRel + changeYRel));
 
-    setCaptions(prevTrackList => prevTrackList.map(item => {
+    const updatedCaptions = (previewCaptions || captionsRef.current).map(item => {
       if (item.id === config.captionId) {
         return { ...item, xRel: calculatedX, yRel: calculatedY };
       }
       return item;
-    }));
+    });
+
+    if (typeof onCaptionMove === 'function') {
+      onCaptionMove(updatedCaptions);
+    }
 
     textDragConfig.current = null;
+    previewCaptions = null;
   }
   
   // ✅ Clean up the ref pointer instantly when dragging ends
