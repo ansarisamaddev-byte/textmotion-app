@@ -3,7 +3,11 @@ import WorkspaceHeader from './components/WorkspaceHeader';
 import TranscriptSidebar from './components/TranscriptSidebar';
 import VideoViewport from './components/VideoViewport';
 import TimelineTrack from './components/TimelineTrack';
-import { Layers, Edit3, X, Bold, Italic, Underline, Strikethrough, Sparkles } from 'lucide-react';
+import {
+  Layers, Sparkles, Type, Maximize2, AlignLeft, AlignCenter, AlignRight,
+  Palette, BetweenHorizontalEnd, Bold, Italic, Underline, Strikethrough,
+  X, Edit3, ChevronLeft
+} from 'lucide-react';
 import RecordRTC from 'recordrtc';
 import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
 
@@ -196,17 +200,18 @@ export default function App() {
   const [zoomScale, setZoomScale] = useState(100); // Track as 100 baseline
   const [translateX, setTranslateX] = useState(0);
   const [translateY, setTranslateY] = useState(0);
-const [canUndo, setCanUndo] = useState(false);
-const [canRedo, setCanRedo] = useState(false);
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
+  const [activePanel, setActivePanel] = useState('menu');
 
-const updateStackStatus = () => {
-  console.log('[Undo] Stack status - Undo stack length:', undoStack.current.length, 'Redo stack length:', redoStack.current.length);
-  setCanUndo(undoStack.current.length > 0);
-  setCanRedo(redoStack.current.length > 0);
-};
+  const updateStackStatus = () => {
+    console.log('[Undo] Stack status - Undo stack length:', undoStack.current.length, 'Redo stack length:', redoStack.current.length);
+    setCanUndo(undoStack.current.length > 0);
+    setCanRedo(redoStack.current.length > 0);
+  };
 
 
-const [captionStyles, setCaptionStyles] = useState({
+  const [captionStyles, setCaptionStyles] = useState({
     preset: 'bold-kinetic',
     fontFamily: 'Impact, Arial Black, sans-serif',
     fontSize: '48px',
@@ -219,10 +224,10 @@ const [captionStyles, setCaptionStyles] = useState({
     shadow: true,
     underline: false,
     strike: false,
-    isEditingCustom: false 
+    isEditingCustom: false
   });
 
-const videoRef = useRef(null);
+  const videoRef = useRef(null);
   const previewCanvasRef = useRef(null);
   const undoStack = useRef([]);
   const redoStack = useRef([]);
@@ -249,13 +254,13 @@ const videoRef = useRef(null);
   const isResizingRef = useRef(false);
   const isTimelineResizingRef = useRef(false);
 
-const getSnapshot = () => ({
-  captions: captions.map(c => ({ ...c })), // Safer than JSON.stringify for arrays
-  styles: { ...captionStyles },
-  activeId,
-  selectedIds,
-  currentTime: videoRef.current ? videoRef.current.currentTime : currentTime
-});
+  const getSnapshot = () => ({
+    captions: captions.map(c => ({ ...c })), // Safer than JSON.stringify for arrays
+    styles: { ...captionStyles },
+    activeId,
+    selectedIds,
+    currentTime: videoRef.current ? videoRef.current.currentTime : currentTime
+  });
 
   const areSnapshotsEqual = (left, right) => {
     if (!left || !right) return false;
@@ -263,18 +268,18 @@ const getSnapshot = () => ({
   };
 
   // Record state BEFORE making changes (Clipchamp style)
-const recordUndo = () => {
-  const currentSnapshot = getSnapshot();
-  const lastSnapshot = undoStack.current[undoStack.current.length - 1];
+  const recordUndo = () => {
+    const currentSnapshot = getSnapshot();
+    const lastSnapshot = undoStack.current[undoStack.current.length - 1];
 
-  // If there is no last snapshot, or if the current state is different, record it.
-  if (!lastSnapshot || !areSnapshotsEqual(lastSnapshot, currentSnapshot)) {
-    undoStack.current.push(currentSnapshot);
-    // Crucial: Clear redo stack whenever a new action is performed
-    redoStack.current = []; 
-    updateStackStatus();
-  }
-};
+    // If there is no last snapshot, or if the current state is different, record it.
+    if (!lastSnapshot || !areSnapshotsEqual(lastSnapshot, currentSnapshot)) {
+      undoStack.current.push(currentSnapshot);
+      // Crucial: Clear redo stack whenever a new action is performed
+      redoStack.current = [];
+      updateStackStatus();
+    }
+  };
 
   const dispatchChange = (newCaptions, newStyles) => {
     recordUndo(); // Save state BEFORE change
@@ -286,24 +291,24 @@ const recordUndo = () => {
     dispatchChange(updatedCaptions, captionStylesRef.current);
   };
 
-const applyState = (state) => {
-  // 1. Update references first to prevent race conditions during render
-  captionsRef.current = state.captions;
-  currentTimeRef.current = state.currentTime;
-  
-  // 2. Batch React updates
-  setCaptions(state.captions);
-  setCaptionStyles(state.styles);
-  setActiveId(state.activeId);
-  setSelectedIds(state.selectedIds);
-  setCurrentTime(state.currentTime);
+  const applyState = (state) => {
+    // 1. Update references first to prevent race conditions during render
+    captionsRef.current = state.captions;
+    currentTimeRef.current = state.currentTime;
 
-  // 3. Force Video Sync
-  if (videoRef.current) {
-    // Setting currentTime is asynchronous; it will trigger the video onSeeked/onTimeUpdate
-    videoRef.current.currentTime = state.currentTime;
-  }
-};
+    // 2. Batch React updates
+    setCaptions(state.captions);
+    setCaptionStyles(state.styles);
+    setActiveId(state.activeId);
+    setSelectedIds(state.selectedIds);
+    setCurrentTime(state.currentTime);
+
+    // 3. Force Video Sync
+    if (videoRef.current) {
+      // Setting currentTime is asynchronous; it will trigger the video onSeeked/onTimeUpdate
+      videoRef.current.currentTime = state.currentTime;
+    }
+  };
 
   const handleUndo = () => {
     if (undoStack.current.length === 0) {
@@ -559,27 +564,27 @@ const applyState = (state) => {
 
         const targetId = dragConfig.captionId;
 
-      localIsDragging = false;
-      if (typeof setIsDraggingText === 'function') setIsDraggingText(false);
-      dragConfig = null;
-      canvasElement.removeAttribute('data-dragging-active');
+        localIsDragging = false;
+        if (typeof setIsDraggingText === 'function') setIsDraggingText(false);
+        dragConfig = null;
+        canvasElement.removeAttribute('data-dragging-active');
 
-      const updatedCaptions = captionsRef.current.map(item => 
-      item.id === targetId ? { ...item, xRel: finalX, yRel: finalY } : item
-    );
-    
-    // We call the dispatchChange function from your component scope
-    // Note: You may need to ensure dispatchChange is accessible here
-    dispatchChange(updatedCaptions, captionStylesRef.current);
-    // --- FIX ENDS HERE ---
+        const updatedCaptions = captionsRef.current.map(item =>
+          item.id === targetId ? { ...item, xRel: finalX, yRel: finalY } : item
+        );
 
-    setTimeout(() => {
-      const ctx = canvasElement.getContext('2d');
-      if (videoRef.current) {
-        ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-        renderCaptionFrame(ctx, canvasElement, videoRef.current, updatedCaptions, captionStylesRef.current);
-      }
-    }, 0);
+        // We call the dispatchChange function from your component scope
+        // Note: You may need to ensure dispatchChange is accessible here
+        dispatchChange(updatedCaptions, captionStylesRef.current);
+        // --- FIX ENDS HERE ---
+
+        setTimeout(() => {
+          const ctx = canvasElement.getContext('2d');
+          if (videoRef.current) {
+            ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            renderCaptionFrame(ctx, canvasElement, videoRef.current, updatedCaptions, captionStylesRef.current);
+          }
+        }, 0);
       }
     };
 
@@ -627,40 +632,40 @@ const applyState = (state) => {
         const ctx = canvas.getContext('2d');
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      // Pulls directly from fresh Ref pointers instead of stale component state
-      renderCaptionFrame(ctx, canvas, video, captionsRef.current, captionStylesRef.current);
+        // Pulls directly from fresh Ref pointers instead of stale component state
+        renderCaptionFrame(ctx, canvas, video, captionsRef.current, captionStylesRef.current);
       }
-    
+
       animId = requestAnimationFrame(updateLoop);
     };
 
-  // Start the hardware-accelerated draw loop
+    // Start the hardware-accelerated draw loop
     animId = requestAnimationFrame(updateLoop);
 
     return () => cancelAnimationFrame(animId);
   }, []);
 
   const handleInteractionEnd = (updatedCaptions) => {
-  // 1. Capture the snapshot BEFORE updating state
-  const previousState = getSnapshot(); 
-  
-  // 2. Push the OLD state to undoStack
-  undoStack.current.push(previousState);
-  redoStack.current = []; // Clear redo
-  updateStackStatus();
-  
-  // 3. Perform the update
-  setCaptions(updatedCaptions);
-};
+    // 1. Capture the snapshot BEFORE updating state
+    const previousState = getSnapshot();
+
+    // 2. Push the OLD state to undoStack
+    undoStack.current.push(previousState);
+    redoStack.current = []; // Clear redo
+    updateStackStatus();
+
+    // 3. Perform the update
+    setCaptions(updatedCaptions);
+  };
 
   useEffect(() => {
-  if (videoSrc && undoStack.current.length === 0) {
-    // Save the initial state immediately when the video is loaded
-    undoStack.current.push(getSnapshot());
-    updateStackStatus();
-    console.log('[Undo] Initial state recorded');
-  }
-}, [videoSrc]);
+    if (videoSrc && undoStack.current.length === 0) {
+      // Save the initial state immediately when the video is loaded
+      undoStack.current.push(getSnapshot());
+      updateStackStatus();
+      console.log('[Undo] Initial state recorded');
+    }
+  }, [videoSrc]);
 
   const handleVideoUpload = (e) => {
     const file = e.target.files[0];
@@ -765,7 +770,7 @@ const applyState = (state) => {
     }
   };
 
-const handleAddBlock = () => {
+  const handleAddBlock = () => {
     const last = captions[captions.length - 1];
     const start = last ? parseFloat((last.end + 0.1).toFixed(1)) : 0;
     dispatchChange([...captions, { id: Date.now().toString(), start, end: start + 2.5, text: "New...", xRel: 0.5, yRel: 0.82 }], captionStyles);
@@ -848,7 +853,7 @@ const handleAddBlock = () => {
     }
   };
 
-const handleCustomStyleChange = (field, value) => {
+  const handleCustomStyleChange = (field, value) => {
     const nextStyles = { ...captionStyles, preset: 'custom', [field]: value };
     const nextCaptions = captions.map(c => selectedIds.includes(c.id) ? { ...c, [field]: value } : c);
     dispatchChange(nextCaptions, nextStyles);
@@ -872,7 +877,7 @@ const handleCustomStyleChange = (field, value) => {
     setZoomScale(newScale);
   };
 
-const setThemePreset = (preset) => {
+  const setThemePreset = (preset) => {
     const updatedStyles = { preset: preset.id, fontFamily: preset.font, fontSize: preset.size, fontWeight: preset.weight, color: preset.color, textTransform: preset.trans, fontStyle: preset.style, strokeColor: preset.strokeColor, strokeWidth: preset.strokeWidth, shadow: preset.shadow, underline: preset.underline, strike: preset.strike, isEditingCustom: false };
     const nextCaptions = captions.map(c => selectedIds.includes(c.id) ? { ...c, ...updatedStyles } : c);
     dispatchChange(nextCaptions, updatedStyles);
@@ -1051,6 +1056,41 @@ const setThemePreset = (preset) => {
     setDuration(videoRef.current.duration);
   };
 
+  const AnimatePanel = ({ activeId, onApplyAnimation }) => {
+    const animations = [
+      { id: 'pop', label: 'Pop' },
+      { id: 'fade', label: 'Fade' },
+      { id: 'slide', label: 'Slide' },
+      { id: 'typewriter', label: 'Typewriter' },
+      { id: 'bounce', label: 'Bounce' },
+      { id: 'stomp', label: 'Stomp' },
+      { id: 'blur', label: 'Blur' },
+      { id: 'none', label: 'None' }
+    ];
+
+    return (
+      <div className="grid grid-cols-2 gap-2 p-2">
+        {animations.map((anim) => (
+          <button
+            key={anim.id}
+            onClick={() => onApplyAnimation(anim.id)}
+            className="bg-zinc-950 border border-zinc-800 p-3 rounded-lg text-xs hover:border-indigo-500 hover:text-indigo-400 transition-all text-zinc-300"
+          >
+            {anim.label}
+          </button>
+        ))}
+      </div>
+    );
+  };
+
+  const handleApplyAnimation = (animType) => {
+    if (!activeId) return;
+    const updated = captions.map(c =>
+      c.id === activeId ? { ...c, animation: animType } : c
+    );
+    dispatchChange(updated, captionStyles);
+  };
+
   const currentActiveCaption = captions.find(c => c.id === activeId);
   const activeViewportStyles = currentActiveCaption ? {
     fontFamily: currentActiveCaption.fontFamily || captionStyles.fontFamily,
@@ -1113,102 +1153,127 @@ const setThemePreset = (preset) => {
             </div>
 
             {/* Config Panel Right Column */}
-            <div className="lg:col-span-1 bg-zinc-900/30 border border-zinc-800/60 rounded-2xl p-4 flex flex-col gap-4 h-full overflow-y-auto custom-scrollbar">
-              <div className="flex items-center justify-between border-b border-zinc-800 pb-2 shrink-0">
-                <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-1.5">
-                  {captionStyles.isEditingCustom ? <Sparkles className="w-3.5 h-3.5 text-indigo-400"/> : <Layers className="w-3.5 h-3.5 text-indigo-400"/>}
-                  {captionStyles.isEditingCustom ? "Custom Controls" : "Style Presets"}
-                </span>
-                <button
-                  onClick={() => setCaptionStyles(prev => ({ ...prev, isEditingCustom: !prev.isEditingCustom }))}
-                  className={`p-1.5 rounded transition ${captionStyles.isEditingCustom ? 'bg-indigo-600 text-white' : 'bg-zinc-900 text-zinc-400 hover:text-zinc-200'}`}
-                >
-                  {captionStyles.isEditingCustom ? <X className="w-4 h-4" /> : <Edit3 className="w-4 h-4" />}
-                </button>
-              </div>
+            <div className="lg:col-span-1 bg-zinc-900/30 border border-zinc-800/60 rounded-2xl p-4 flex flex-col gap-4 h-full overflow-hidden">
 
-              {captionStyles.isEditingCustom ? (
-                <div className="space-y-4 text-xs">
-                  <div className="flex flex-col gap-1">
-                    <label className="text-zinc-500 font-bold uppercase text-[10px] tracking-wider">Font Style Preset</label>
-                    <select value={captionStyles.fontFamily} onChange={(e) => handleCustomStyleChange('fontFamily', e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded p-1.5 text-zinc-200 focus:outline-none focus:border-indigo-500">
-                      <option value="Impact, Arial Black, sans-serif">Impact (Kinetic Bold)</option>
-                      <option value="system-ui, sans-serif">System Sans (Minimal)</option>
-                      <option value="'Courier New', Courier, monospace">Courier (Typewriter)</option>
-                      <option value="Georgia, serif">Georgia (Retro Serif)</option>
-                      <option value="Montserrat, sans-serif">Montserrat (Geometric)</option>
-                      <option value="Arial Black, sans-serif">Arial Black (Heavy)</option>
-                      <option value="'Comic Sans MS', cursive">Comic Sans (Punchy)</option>
-                      <option value="Inter, sans-serif">Inter (Clean Sub)</option>
-                    </select>
-                  </div>
-
-                  <div className="flex flex-col gap-1">
-                    <div className="flex justify-between text-[10px] text-zinc-500 font-bold uppercase tracking-wider">
-                      <label>Font Size</label>
-                      <span>{captionStyles.fontSize}</span>
-                    </div>
-                    <input type="range" min="16" max="100" step="2" value={parseInt(captionStyles.fontSize) || 48} onChange={(e) => handleCustomStyleChange('fontSize', `${e.target.value}px`)} className="w-full h-1 accent-indigo-500 bg-zinc-800 rounded cursor-pointer" />
-                  </div>
-
-                  <div className="flex flex-col gap-1">
-                    <label className="text-zinc-500 font-bold uppercase text-[10px] tracking-wider">Case Style</label>
-                    <select value={captionStyles.textTransform} onChange={(e) => handleCustomStyleChange('textTransform', e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded p-1.5 text-zinc-200 focus:outline-none">
-                      <option value="uppercase">UPPERCASE</option>
-                      <option value="none">As Written (Standard)</option>
-                    </select>
-                  </div>
-
-                  <div className="flex flex-col gap-1">
-                    <label className="text-zinc-500 font-bold uppercase text-[10px] tracking-wider">Text Modifiers</label>
-                    <div className="grid grid-cols-4 gap-1 bg-zinc-950 border border-zinc-800 p-1 rounded-lg text-center">
-                      <button type="button" onClick={() => handleCustomStyleChange('fontWeight', captionStyles.fontWeight === '900' ? '400' : '900')} className={`p-2 rounded flex justify-center transition ${captionStyles.fontWeight === '900' ? 'text-indigo-400 bg-indigo-500/10 font-black' : 'text-zinc-500 hover:text-zinc-300'}`} title="Bold Weight"><Bold className="w-3.5 h-3.5" /></button>
-                      <button type="button" onClick={() => handleCustomStyleChange('fontStyle', captionStyles.fontStyle === 'italic' ? 'normal' : 'italic')} className={`p-2 rounded flex justify-center transition ${captionStyles.fontStyle === 'italic' ? 'text-indigo-400 bg-indigo-500/10' : 'text-zinc-500 hover:text-zinc-300'}`} title="Italic Slant"><Italic className="w-3.5 h-3.5" /></button>
-                      <button type="button" onClick={() => handleCustomStyleChange('underline', !captionStyles.underline)} className={`p-2 rounded flex justify-center transition ${captionStyles.underline ? 'text-indigo-400 bg-indigo-500/10' : 'text-zinc-500 hover:text-zinc-300'}`} title="Underline Line"><Underline className="w-3.5 h-3.5" /></button>
-                      <button type="button" onClick={() => handleCustomStyleChange('strike', !captionStyles.strike)} className={`p-2 rounded flex justify-center transition ${captionStyles.strike ? 'text-indigo-400 bg-indigo-500/10' : 'text-zinc-500 hover:text-zinc-300'}`} title="Strike Through"><Strikethrough className="w-3.5 h-3.5" /></button>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="flex flex-col gap-1">
-                      <label className="text-zinc-500 font-bold uppercase text-[10px] tracking-wider">Text</label>
-                      <div className="flex items-center bg-zinc-950 border border-zinc-800 rounded p-1">
-                        <input type="color" value={captionStyles.color} onChange={(e) => handleCustomStyleChange('color', e.target.value)} className="w-6 h-6 bg-transparent border-0 cursor-pointer rounded" />
-                        <span className="ml-1.5 font-mono text-[10px] text-zinc-400 uppercase">{captionStyles.color}</span>
-                      </div>
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      <label className="text-zinc-500 font-bold uppercase text-[10px] tracking-wider">Stroke</label>
-                      <div className="flex items-center bg-zinc-950 border border-zinc-800 rounded p-1">
-                        <input type="color" value={captionStyles.strokeColor || '#000000'} onChange={(e) => handleCustomStyleChange('strokeColor', e.target.value)} className="w-6 h-6 bg-transparent border-0 cursor-pointer rounded" />
-                        <span className="ml-1.5 font-mono text-[10px] text-zinc-400 uppercase">{captionStyles.strokeColor || '#000000'}</span>
-                      </div>
-                    </div>
+              {/* VIEW MANAGER: Switches between "MENU" and "SETTINGS" */}
+              {activePanel === 'menu' ? (
+                <div className="space-y-4 animate-in fade-in zoom-in-95 duration-200">
+                  <h2 className="text-xs font-bold text-zinc-500 uppercase">Editor Tools</h2>
+                  <div className="grid grid-cols-1 gap-3">
+                    {[
+                      { id: 'presets', label: 'Preset Captions', icon: Layers },
+                      { id: 'custom', label: 'Custom Captions', icon: Edit3 },
+                      { id: 'animate', label: 'Animate Captions', icon: Sparkles },
+                    ].map((item) => (
+                      <button
+                        key={item.id}
+                        onClick={() => setActivePanel(item.id)}
+                        className="flex items-center gap-3 p-4 bg-zinc-950 border border-zinc-800 rounded-xl hover:border-indigo-500/50 transition-all group"
+                      >
+                        <item.icon className="w-5 h-5 text-indigo-400" />
+                        <span className="text-sm font-semibold text-zinc-200 group-hover:text-white">{item.label}</span>
+                      </button>
+                    ))}
                   </div>
                 </div>
               ) : (
-                <div className="flex-1 overflow-y-auto pr-1 space-y-1.5 max-h-[480px] custom-scrollbar">
-                  {STYLE_PRESETS.map((preset) => (
-                    <button
-                      key={preset.id}
-                      onClick={() => setThemePreset(preset)}
-                      className={`w-full text-left p-2.5 rounded-xl border transition-all text-xs flex flex-col gap-1 ${
-                        captionStyles.preset === preset.id
-                          ? 'bg-indigo-600/15 border-indigo-500/80 text-white shadow-sm'
-                          : 'bg-zinc-950/40 border-zinc-800/80 text-zinc-300 hover:bg-zinc-900/60 hover:text-white'
-                        }`}
-                    >
-                      <span className="font-semibold">{preset.name}</span>
-                      <span className="text-[10px] opacity-40 font-mono truncate">
-                        {preset.font.split(',')[0]} • {preset.size}
-                      </span>
-                    </button>
-                  ))}
+                /* SUB-PANEL: Settings View */
+                <div className="h-full flex flex-col animate-in slide-in-from-right-4 duration-300">
+                  <button
+                    onClick={() => setActivePanel('menu')}
+                    className="flex items-center text-xs text-zinc-500 hover:text-white mb-4 transition-colors"
+                  >
+                    <ChevronLeft className="w-4 h-4" /> Back to Tools
+                  </button>
+
+                  <div className="flex-1 overflow-y-auto custom-scrollbar pr-1">
+                    {activePanel === 'presets' && (
+                      <div className="space-y-2">
+                        {STYLE_PRESETS.map(p => (
+                          <button key={p.id} onClick={() => setThemePreset(p)} className="w-full p-3 bg-zinc-950 border border-zinc-800 rounded-lg text-xs text-left hover:border-indigo-500">{p.name}</button>
+                        ))}
+                      </div>
+                    )}
+
+{activePanel === 'custom' && (
+  <div className="space-y-5 text-xs animate-in fade-in duration-300">
+    
+    {/* Font & Size Row */}
+    <div className="grid grid-cols-2 gap-3">
+      <div className="flex flex-col gap-1">
+        <label className="text-[10px] font-bold text-zinc-500 uppercase flex items-center gap-1.5"><Type className="w-3 h-3" /> Font</label>
+        <select value={captionStyles.fontFamily} onChange={(e) => handleCustomStyleChange('fontFamily', e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded p-1.5">
+          <option value="Impact">Impact</option>
+          <option value="Montserrat">Montserrat</option>
+          <option value="Courier New">Courier</option>
+        </select>
+      </div>
+      <div className="flex flex-col gap-1">
+        <label className="text-[10px] font-bold text-zinc-500 uppercase flex items-center gap-1.5"><Maximize2 className="w-3 h-3" /> Size</label>
+        <input type="range" min="16" max="120" value={parseInt(captionStyles.fontSize)} onChange={(e) => handleCustomStyleChange('fontSize', e.target.value + 'px')} className="w-full h-1 accent-indigo-500 bg-zinc-800 rounded mt-2" />
+      </div>
+    </div>
+
+    {/* Tracking & Case */}
+    <div className="grid grid-cols-2 gap-3">
+
+      <div className="flex flex-col gap-1">
+        <label className="text-[10px] font-bold text-zinc-500 uppercase">Case</label>
+        <button onClick={() => handleCustomStyleChange('textTransform', captionStyles.textTransform === 'uppercase' ? 'none' : 'uppercase')} className="w-full bg-zinc-950 border border-zinc-800 rounded p-1.5 text-left">
+          {captionStyles.textTransform === 'uppercase' ? 'ABC (Upper)' : 'Abc (Normal)'}
+        </button>
+      </div>
+    </div>
+
+    {/* Alignment */}
+    <div className="flex flex-col gap-1">
+      <label className="text-[10px] font-bold text-zinc-500 uppercase">Alignment</label>
+      <div className="grid grid-cols-3 gap-1 bg-zinc-950 border border-zinc-800 p-1 rounded-lg">
+        <button onClick={() => handleCustomStyleChange('textAlign', 'left')} className="p-1.5 hover:bg-zinc-800 rounded flex justify-center"><AlignLeft className="w-3.5 h-3.5" /></button>
+        <button onClick={() => handleCustomStyleChange('textAlign', 'center')} className="p-1.5 hover:bg-zinc-800 rounded flex justify-center"><AlignCenter className="w-3.5 h-3.5" /></button>
+        <button onClick={() => handleCustomStyleChange('textAlign', 'right')} className="p-1.5 hover:bg-zinc-800 rounded flex justify-center"><AlignRight className="w-3.5 h-3.5" /></button>
+      </div>
+    </div>
+
+    {/* Modifiers Grid */}
+    <div className="grid grid-cols-4 gap-1 bg-zinc-950 border border-zinc-800 p-1 rounded-lg">
+      <button onClick={() => handleCustomStyleChange('fontWeight', captionStyles.fontWeight === '900' ? '400' : '900')} className={`p-2 rounded flex justify-center ${captionStyles.fontWeight === '900' ? 'bg-zinc-800 text-indigo-400' : 'text-zinc-500'}`}><Bold className="w-3.5 h-3.5"/></button>
+      <button onClick={() => handleCustomStyleChange('fontStyle', captionStyles.fontStyle === 'italic' ? 'normal' : 'italic')} className={`p-2 rounded flex justify-center ${captionStyles.fontStyle === 'italic' ? 'bg-zinc-800 text-indigo-400' : 'text-zinc-500'}`}><Italic className="w-3.5 h-3.5"/></button>
+      <button onClick={() => handleCustomStyleChange('underline', !captionStyles.underline)} className={`p-2 rounded flex justify-center ${captionStyles.underline ? 'bg-zinc-800 text-indigo-400' : 'text-zinc-500'}`}><Underline className="w-3.5 h-3.5"/></button>
+      <button onClick={() => handleCustomStyleChange('strike', !captionStyles.strike)} className={`p-2 rounded flex justify-center ${captionStyles.strike ? 'bg-zinc-800 text-indigo-400' : 'text-zinc-500'}`}><Strikethrough className="w-3.5 h-3.5"/></button>
+    </div>
+
+    {/* Colors */}
+    <div className="grid grid-cols-2 gap-3 pt-2 border-t border-zinc-800">
+       <div className="flex flex-col gap-1.5">
+          <label className="text-[10px] text-zinc-500 font-bold uppercase flex items-center gap-1"><Palette className="w-3 h-3" /> Text</label>
+          <div className="flex items-center gap-2 bg-zinc-950 border border-zinc-800 p-1 rounded-lg">
+            <input type="color" value={captionStyles.color} onChange={(e) => handleCustomStyleChange('color', e.target.value)} className="w-6 h-6 rounded cursor-pointer bg-transparent border-0" />
+            <span className="text-[10px] font-mono text-zinc-400">{captionStyles.color}</span>
+          </div>
+       </div>
+       <div className="flex flex-col gap-1.5">
+          <label className="text-[10px] text-zinc-500 font-bold uppercase flex items-center gap-1"><Palette className="w-3 h-3" /> Stroke</label>
+          <div className="flex items-center gap-2 bg-zinc-950 border border-zinc-800 p-1 rounded-lg">
+            <input type="color" value={captionStyles.strokeColor} onChange={(e) => handleCustomStyleChange('strokeColor', e.target.value)} className="w-6 h-6 rounded cursor-pointer bg-transparent border-0" />
+            <span className="text-[10px] font-mono text-zinc-400">{captionStyles.strokeColor}</span>
+          </div>
+       </div>
+    </div>
+  </div>
+)}
+
+                    {activePanel === 'animate' && (
+                      <AnimatePanel activeId={activeId} onApplyAnimation={handleApplyAnimation} />
+                    )}
+                  </div>
                 </div>
               )}
             </div>
-          </div>
 
+
+
+          </div>
           {/* ─── 📥 DYNAMIC RESIZABLE TIMELINE FOOTER ─── */}
           <div
             style={{ height: `${timelineHeight}px` }}
