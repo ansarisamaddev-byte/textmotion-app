@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Play, Pause, Maximize2, Volume2, ZoomIn, Move } from 'lucide-react';
+import { Play, Pause, Maximize2, Volume2, ZoomIn, Move, Undo2, Redo2 } from 'lucide-react';
 import { renderCaptionFrame } from '../App';
 
 export default function VideoViewport({ 
@@ -8,10 +8,13 @@ export default function VideoViewport({
   isPlaying, 
   currentTime, 
   duration, 
-  activeCaption,    
   captions, 
   captionStyles,    
   onTogglePlay, 
+  onUndo,
+  onRedo,
+  canUndo,
+  canRedo,
   onTimeUpdate,    
   onLoadedMetadata, 
   previewCanvasRef, 
@@ -23,7 +26,7 @@ export default function VideoViewport({
   onZoomChange,   
   onPanChange,    
   handleResetView,
-  setCaptions       
+  onCaptionMove      
 }) {
   const isViewportDraggingRef = useRef(false);
   
@@ -38,18 +41,31 @@ export default function VideoViewport({
   // --- KEYBOARD SPACEBAR LISTENERS ---
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA') {
+      const activeTag = document.activeElement?.tagName;
+      if (activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT') {
         return;
       }
+
       if (e.code === 'Space') {
-        e.preventDefault(); 
+        e.preventDefault();
         if (videoSrc) onTogglePlay();
+      }
+
+      const isZ = e.key?.toLowerCase() === 'z';
+      const metaKey = e.ctrlKey || e.metaKey;
+      if (metaKey && isZ) {
+        e.preventDefault();
+        if (e.shiftKey) {
+          if (typeof onRedo === 'function') onRedo();
+        } else {
+          if (typeof onUndo === 'function') onUndo();
+        }
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onTogglePlay, videoSrc]);
+  }, [onTogglePlay, videoSrc, onUndo, onRedo]);
 
   const formatTime = (timeInSeconds) => {
     if (isNaN(timeInSeconds)) return "0:00";
@@ -95,6 +111,8 @@ export default function VideoViewport({
     };
   };
 
+  let previewCaptions = null;
+
   const handleCanvasMouseDown = (e) => {
   const canvas = previewCanvasRef.current;
   const container = e.currentTarget; 
@@ -113,7 +131,7 @@ export default function VideoViewport({
 
     if (isWithinX && isWithinY) {
       e.preventDefault();
-      
+      previewCaptions = captionsRef.current.map(item => ({ ...item }));
       textDragConfig.current = {
         captionId: activeCap.id,
         initialXRel: activeCap.xRel !== undefined ? activeCap.xRel : 0.5,
@@ -158,7 +176,7 @@ const handleGlobalMouseMove = (e) => {
     const calculatedX = Math.max(0.01, Math.min(0.99, config.initialXRel + changeXRel));
     const calculatedY = Math.max(0.01, Math.min(0.99, config.initialYRel + changeYRel));
 
-    const activeCap = captionsRef.current?.find(c => c.id === config.captionId);
+    const activeCap = previewCaptions?.find(c => c.id === config.captionId);
     if (activeCap) {
       activeCap.xRel = calculatedX;
       activeCap.yRel = calculatedY;
@@ -166,7 +184,7 @@ const handleGlobalMouseMove = (e) => {
 
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    renderCaptionFrame(ctx, canvas, video, captionsRef.current || [], captionStyles);
+    renderCaptionFrame(ctx, canvas, video, previewCaptions || [], captionStyles);
     
   // ✅ Read directly from the instant pointer ref value now
   } else if (isViewportDraggingRef.current) {
@@ -194,14 +212,19 @@ const handleGlobalMouseUp = (e) => {
     const calculatedX = Math.max(0.01, Math.min(0.99, config.initialXRel + changeXRel));
     const calculatedY = Math.max(0.01, Math.min(0.99, config.initialYRel + changeYRel));
 
-    setCaptions(prevTrackList => prevTrackList.map(item => {
+    const updatedCaptions = (previewCaptions || captionsRef.current).map(item => {
       if (item.id === config.captionId) {
         return { ...item, xRel: calculatedX, yRel: calculatedY };
       }
       return item;
-    }));
+    });
+
+    if (typeof onCaptionMove === 'function') {
+      onCaptionMove(updatedCaptions);
+    }
 
     textDragConfig.current = null;
+    previewCaptions = null;
   }
   
   // ✅ Clean up the ref pointer instantly when dragging ends
@@ -261,6 +284,27 @@ const handleGlobalMouseUp = (e) => {
   className="relative flex-1 flex items-center justify-center min-h-0 w-full rounded-xl bg-zinc-950 border border-zinc-900/60 overflow-hidden group shadow-inner pointer-events-auto"
   style={{ cursor: zoomScale > 100 ? (isViewportDraggingRef.current ? 'grabbing' : 'grab') : 'default' }}
 >
+        <div className="absolute top-3 right-3 z-30 flex items-center gap-1 p-1 rounded-full bg-zinc-950/90 border border-zinc-800 shadow-lg backdrop-blur-sm">
+          <button
+            type="button"
+            onClick={onUndo}
+            disabled={!canUndo}
+            className={`p-2 rounded-full transition ${canUndo ? 'text-white hover:bg-indigo-500/20' : 'text-zinc-600 bg-zinc-900/70 cursor-not-allowed'}`}
+            title="Undo (Ctrl+Z)"
+          >
+            <Undo2 className="w-4 h-4" />
+          </button>
+          <button
+            type="button"
+            onClick={onRedo}
+            disabled={!canRedo}
+            className={`p-2 rounded-full transition ${canRedo ? 'text-white hover:bg-indigo-500/20' : 'text-zinc-600 bg-zinc-900/70 cursor-not-allowed'}`}
+            title="Redo (Ctrl+Shift+Z)"
+          >
+            <Redo2 className="w-4 h-4" />
+          </button>
+        </div>
+
         {!videoSrc && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-zinc-500 font-mono text-xs z-10 bg-zinc-950">
             <span className="p-2.5 bg-zinc-900 rounded-xl border border-zinc-800 text-base">🎬</span>

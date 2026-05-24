@@ -23,7 +23,6 @@ export default function WorkspaceHeader({
 
       {/* Action Control Group */}
       <div className="flex items-center gap-3">
-        {/* Upload Action */}
         <label className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-semibold text-zinc-300 cursor-pointer transition-all active:scale-95 select-none">
           <Upload className="w-3.5 h-3.5 text-indigo-400" />
           <span>Import Video</span>
@@ -35,7 +34,6 @@ export default function WorkspaceHeader({
           />
         </label>
 
-        {/* 🔥 MANDATORY EXPORT BUTTON */}
         {hasVideo && (
           <button
             onClick={onExport}
