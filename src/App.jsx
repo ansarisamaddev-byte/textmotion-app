@@ -49,9 +49,21 @@ export const renderCaptionFrame = (ctx, canvas, video, captions, captionStyles) 
 
   const currentTime = video.currentTime;
   const activeCap = captions.find(c => currentTime >= c.start && currentTime <= c.end);
-
   if (activeCap) {
     ctx.save();
+
+    const animation = activeCap.animation || captionStyles.animation || 'none';
+    
+    // Apply Animation Logic safely
+    if (animation === 'fade') {
+      const elapsed = currentTime - activeCap.start;
+      const opacity = Math.min(elapsed / 0.5, 1);
+      ctx.globalAlpha = opacity;
+    } else if (animation === 'slide') {
+      const elapsed = currentTime - activeCap.start;
+      const slideOffset = Math.max(0, 50 - (elapsed * 100)); // Moves up 50px
+      ctx.transform(1, 0, 0, 1, 0, slideOffset);
+    }
 
     const fontFamily = activeCap.fontFamily || captionStyles.fontFamily || 'Impact';
     const fontSize = activeCap.fontSize || captionStyles.fontSize || '48px';
@@ -114,7 +126,6 @@ export const renderCaptionFrame = (ctx, canvas, video, captions, captionStyles) 
       const w = ctx.measureText(line).width;
       if (w > calculatedMaxWidth) calculatedMaxWidth = w;
     });
-
     const totalBlockHeight = lines.length * lineSpacingOffset;
     activeCap._metaBoundingBox = {
       centerX: xPos,
@@ -175,6 +186,8 @@ export const renderCaptionFrame = (ctx, canvas, video, captions, captionStyles) 
         ctx.restore();
       }
 
+
+
       initialYPos -= lineSpacingOffset;
     }
 
@@ -213,6 +226,7 @@ export default function App() {
 
   const [captionStyles, setCaptionStyles] = useState({
     preset: 'bold-kinetic',
+    animation: 'none', // Add this
     fontFamily: 'Impact, Arial Black, sans-serif',
     fontSize: '48px',
     fontWeight: '900',
@@ -780,9 +794,10 @@ export default function App() {
     dispatchChange(captions.filter(c => c.id !== id), captionStyles);
   };
 
-  const handleUpdateCaption = (id, updates) => {
-    dispatchChange(captions.map(c => c.id === id ? { ...c, ...updates } : c), captionStyles);
-  };
+const handleUpdateCaption = (id, updates) => {
+  const updatedCaptions = captions.map(c => (c.id === id ? { ...c, ...updates } : c));
+  dispatchChange(updatedCaptions, captionStyles);
+};
 
   const handleSeparatorMouseDown = (e) => {
     e.preventDefault();
@@ -1056,40 +1071,42 @@ export default function App() {
     setDuration(videoRef.current.duration);
   };
 
-  const AnimatePanel = ({ activeId, onApplyAnimation }) => {
-    const animations = [
-      { id: 'pop', label: 'Pop' },
-      { id: 'fade', label: 'Fade' },
-      { id: 'slide', label: 'Slide' },
-      { id: 'typewriter', label: 'Typewriter' },
-      { id: 'bounce', label: 'Bounce' },
-      { id: 'stomp', label: 'Stomp' },
-      { id: 'blur', label: 'Blur' },
-      { id: 'none', label: 'None' }
-    ];
+const AnimatePanel = ({ activeId, onApplyAnimation }) => {
+  const anims = [
+    { id: 'none', name: 'None' },
+    { id: 'fade', name: 'Fade In' },
+    { id: 'slide', name: 'Slide Up' }
+  ];
 
-    return (
-      <div className="grid grid-cols-2 gap-2 p-2">
-        {animations.map((anim) => (
-          <button
-            key={anim.id}
-            onClick={() => onApplyAnimation(anim.id)}
-            className="bg-zinc-950 border border-zinc-800 p-3 rounded-lg text-xs hover:border-indigo-500 hover:text-indigo-400 transition-all text-zinc-300"
-          >
-            {anim.label}
-          </button>
-        ))}
-      </div>
-    );
-  };
+  return (
+    <div className="grid grid-cols-1 gap-2">
+      {anims.map(anim => (
+        <button 
+          key={anim.id}
+          onClick={() => onApplyAnimation(anim.id)}
+          className="p-3 bg-zinc-950 border border-zinc-800 rounded-lg text-xs hover:border-indigo-500 text-left transition-all"
+        >
+          {anim.name}
+        </button>
+      ))}
+    </div>
+  );
+};
 
-  const handleApplyAnimation = (animType) => {
-    if (!activeId) return;
-    const updated = captions.map(c =>
-      c.id === activeId ? { ...c, animation: animType } : c
+const handleApplyAnimation = (animationType) => {
+  console.log("Applying animation:", animationType);
+  
+  // 1. Update the style state
+  setCaptionStyles(prev => ({ ...prev, animation: animationType }));
+
+  // 2. If a specific caption is active, update it in the array too
+  if (activeId) {
+    const updatedCaptions = captions.map(c => 
+      c.id === activeId ? { ...c, animation: animationType } : c
     );
-    dispatchChange(updated, captionStyles);
-  };
+    dispatchChange(updatedCaptions, { ...captionStyles, animation: animationType });
+  }
+};
 
   const currentActiveCaption = captions.find(c => c.id === activeId);
   const activeViewportStyles = currentActiveCaption ? {
