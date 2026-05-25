@@ -4,12 +4,22 @@ const HANDLES = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
 
 const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
 
+const handlePos = {
+  nw: 'top-0 left-0 -translate-x-1/2 -translate-y-1/2 cursor-nwse-resize',
+  n: 'top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 cursor-ns-resize',
+  ne: 'top-0 right-0 translate-x-1/2 -translate-y-1/2 cursor-nesw-resize',
+  e: 'top-1/2 right-0 translate-x-1/2 -translate-y-1/2 cursor-ew-resize',
+  se: 'bottom-0 right-0 translate-x-1/2 translate-y-1/2 cursor-nwse-resize',
+  s: 'bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2 cursor-ns-resize',
+  sw: 'bottom-0 left-0 -translate-x-1/2 translate-y-1/2 cursor-nesw-resize',
+  w: 'top-1/2 left-0 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize'
+};
+
 export default function CaptionSelectionOverlay({
   canvasRef,
   currentTime,
   captions,
   activeId,
-  zoomScale,
   onSelectCaption,
   onTransformLive,
   onTransformCommit,
@@ -31,11 +41,12 @@ export default function CaptionSelectionOverlay({
       return;
     }
     const b = activeCaption._metaBoundingBox;
+    const pad = 2;
     setBox({
-      leftPct: (b.left / canvas.width) * 100,
-      topPct: (b.topY / canvas.height) * 100,
-      widthPct: (b.width / canvas.width) * 100,
-      heightPct: (b.height / canvas.height) * 100
+      leftPct: ((b.left - pad) / canvas.width) * 100,
+      topPct: ((b.topY - pad) / canvas.height) * 100,
+      widthPct: ((b.width + pad * 2) / canvas.width) * 100,
+      heightPct: ((b.height + pad * 2) / canvas.height) * 100
     });
   }, [canvasRef, activeCaption, currentTime, captions, activeId, renderTick]);
 
@@ -54,24 +65,17 @@ export default function CaptionSelectionOverlay({
 
   const applyResize = useCallback((clientX, clientY, handle) => {
     const canvas = canvasRef.current;
-    const cap = captions.find(c => c.id === activeId);
-    if (!canvas || !cap || !dragRef.current) return;
-
+    if (!canvas || !dragRef.current) return;
     const rect = canvas.getBoundingClientRect();
     const pointerY = ((clientY - rect.top) / rect.height) * canvas.height;
     const pointerX = ((clientX - rect.left) / rect.width) * canvas.width;
     const b = dragRef.current.initialBox;
 
     let scale = 1;
-    if (handle.includes('s')) {
-      scale = (pointerY - b.topY) / Math.max(b.height, 1);
-    } else if (handle.includes('n')) {
-      scale = (b.bottomY - pointerY) / Math.max(b.height, 1);
-    } else if (handle.includes('e')) {
-      scale = (pointerX - b.left) / Math.max(b.width, 1);
-    } else if (handle.includes('w')) {
-      scale = (b.right - pointerX) / Math.max(b.width, 1);
-    }
+    if (handle.includes('s')) scale = (pointerY - b.topY) / Math.max(b.height, 1);
+    else if (handle.includes('n')) scale = (b.bottomY - pointerY) / Math.max(b.height, 1);
+    else if (handle.includes('e')) scale = (pointerX - b.left) / Math.max(b.width, 1);
+    else if (handle.includes('w')) scale = (b.right - pointerX) / Math.max(b.width, 1);
 
     if (handle.length === 2) {
       const sy = handle.includes('s') ? (pointerY - b.topY) : (b.bottomY - pointerY);
@@ -82,7 +86,7 @@ export default function CaptionSelectionOverlay({
     scale = clamp(scale, 0.35, 3.5);
     const newSize = Math.round(clamp(dragRef.current.initialFontSize * scale, 14, 160));
     onTransformLive(activeId, { fontSize: `${newSize}px` });
-  }, [activeId, canvasRef, captions, onTransformLive]);
+  }, [activeId, canvasRef, onTransformLive]);
 
   const onPointerDown = (e, mode, handle = null) => {
     e.preventDefault();
@@ -106,11 +110,8 @@ export default function CaptionSelectionOverlay({
 
     const onMove = (ev) => {
       if (!dragRef.current) return;
-      if (dragRef.current.mode === 'move') {
-        applyMove(ev.clientX, ev.clientY);
-      } else {
-        applyResize(ev.clientX, ev.clientY, dragRef.current.handle);
-      }
+      if (dragRef.current.mode === 'move') applyMove(ev.clientX, ev.clientY);
+      else applyResize(ev.clientX, ev.clientY, dragRef.current.handle);
     };
 
     const onUp = () => {
@@ -127,45 +128,25 @@ export default function CaptionSelectionOverlay({
 
   if (!box || !activeCaption) return null;
 
-  const handleClass = (h) => {
-    const pos = {
-      nw: 'top-0 left-0 -translate-x-1/2 -translate-y-1/2 cursor-nw-resize',
-      n: 'top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 cursor-n-resize',
-      ne: 'top-0 right-0 translate-x-1/2 -translate-y-1/2 cursor-ne-resize',
-      e: 'top-1/2 right-0 translate-x-1/2 -translate-y-1/2 cursor-e-resize',
-      se: 'bottom-0 right-0 translate-x-1/2 translate-y-1/2 cursor-se-resize',
-      s: 'bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2 cursor-s-resize',
-      sw: 'bottom-0 left-0 -translate-x-1/2 translate-y-1/2 cursor-sw-resize',
-      w: 'top-1/2 left-0 -translate-x-1/2 -translate-y-1/2 cursor-w-resize'
-    };
-    return pos[h];
-  };
-
   return (
-    <div
-      className="absolute inset-0 z-20 pointer-events-none"
-      style={{ touchAction: 'none' }}
-    >
+    <div className="absolute inset-0 z-20 pointer-events-none" style={{ touchAction: 'none' }}>
       <div
-        className="absolute pointer-events-auto border-2 border-indigo-400 rounded-sm shadow-[0_0_0_1px_rgba(99,102,241,0.35)]"
+        className="absolute pointer-events-auto rounded-[3px]"
         style={{
           left: `${box.leftPct}%`,
           top: `${box.topPct}%`,
           width: `${box.widthPct}%`,
           height: `${box.heightPct}%`,
-          minWidth: 24,
-          minHeight: 16
+          boxShadow: '0 0 0 1px rgba(99,102,241,0.9), 0 0 0 4px rgba(99,102,241,0.15)'
         }}
         onPointerDown={(e) => onPointerDown(e, 'move')}
       >
-        <div className="absolute -top-6 left-0 px-1.5 py-0.5 rounded bg-indigo-600/90 text-[9px] font-bold text-white whitespace-nowrap pointer-events-none">
-          Caption
-        </div>
+        <div className="absolute inset-0 border border-white/90 rounded-[3px] pointer-events-none" />
 
         {HANDLES.map(h => (
           <div
             key={h}
-            className={`absolute w-2.5 h-2.5 bg-white border-2 border-indigo-500 rounded-sm shadow ${handleClass(h)}`}
+            className={`absolute w-3 h-3 rounded-full bg-white border-2 border-indigo-500 shadow-md hover:scale-110 transition-transform ${handlePos[h]}`}
             onPointerDown={(e) => onPointerDown(e, 'resize', h)}
           />
         ))}

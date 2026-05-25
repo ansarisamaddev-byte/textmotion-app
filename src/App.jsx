@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import WorkspaceHeader from './components/WorkspaceHeader';
 import TranscriptSidebar from './components/TranscriptSidebar';
 import VideoViewport from './components/VideoViewport';
@@ -12,7 +12,9 @@ import { renderCaptionFrame } from './lib/captionRenderer';
 import { INITIAL_CAPTIONS, DEFAULT_CAPTION_STYLES, DEFAULT_CAPTION_FIELDS } from './constants/captions';
 import { STYLE_PRESETS } from './constants/stylePresets';
 import { stylesFromCaption, reorderCaptions } from './utils/captionStyles';
+import { retimeCaptionsSequential } from './utils/captionTiming';
 import { useUndoRedo } from './hooks/useUndoRedo';
+import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { exportVideo } from './services/videoExport';
 
 export { STYLE_PRESETS } from './constants/stylePresets';
@@ -36,6 +38,7 @@ export default function App() {
   const [activePanel, setActivePanel] = useState('menu');
   const [captionStyles, setCaptionStyles] = useState(DEFAULT_CAPTION_STYLES);
   const [timelineHeight, setTimelineHeight] = useState(220);
+  const [helpOpen, setHelpOpen] = useState(false);
 
   const videoRef = useRef(null);
   const previewCanvasRef = useRef(null);
@@ -242,8 +245,44 @@ export default function App() {
   };
 
   const handleReorderCaptions = (fromIndex, toIndex) => {
-    dispatchChange(reorderCaptions(captions, fromIndex, toIndex), captionStyles);
+    const reordered = reorderCaptions(captions, fromIndex, toIndex);
+    const retimed = retimeCaptionsSequential(reordered);
+    dispatchChange(retimed, captionStyles);
+    const moved = retimed[toIndex];
+    if (moved) handleSelectCaption(moved.id);
   };
+
+  const handleZoomIn = useCallback(() => {
+    setZoomScale(prev => Math.min(400, prev + 25));
+  }, []);
+
+  const handleZoomOut = useCallback(() => {
+    setZoomScale(prev => {
+      const next = Math.max(100, prev - 25);
+      if (next <= 100) {
+        setTranslateX(0);
+        setTranslateY(0);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleResetView = useCallback(() => {
+    setZoomScale(100);
+    setTranslateX(0);
+    setTranslateY(0);
+  }, []);
+
+  const handleDeleteActive = useCallback(() => {
+    if (!activeId || captions.length <= 1) return;
+    handleDeleteBlock(activeId);
+  }, [activeId, captions.length]);
+
+  const handleSeekBy = useCallback((delta) => {
+    if (!videoRef.current || !duration) return;
+    const t = Math.max(0, Math.min(duration, (videoRef.current.currentTime || 0) + delta));
+    handleTimelineSeek(t);
+  }, [duration, handleTimelineSeek]);
 
   const handleUpdateCaptionLive = (id, property, value) => {
     beginTransaction();
@@ -400,6 +439,27 @@ export default function App() {
 
   const currentActiveCaption = captions.find(c => c.id === activeId);
 
+  const shortcutHandlers = useMemo(() => ({
+    onTogglePlay: () => videoSrc && handleTogglePlay(),
+    onUndo: undo,
+    onRedo: redo,
+    onDelete: handleDeleteActive,
+    onSeekBack: () => handleSeekBy(-0.1),
+    onSeekForward: () => handleSeekBy(0.1),
+    onZoomIn: handleZoomIn,
+    onZoomOut: handleZoomOut,
+    onResetView: handleResetView,
+    onAddCaption: handleAddBlock,
+    onOpenPanel: setActivePanel,
+    onEscape: () => setActivePanel('menu'),
+    onShowHelp: () => setHelpOpen(true)
+  }), [
+    videoSrc, undo, redo, handleDeleteActive, handleSeekBy,
+    handleZoomIn, handleZoomOut, handleResetView, handleAddBlock
+  ]);
+
+  useKeyboardShortcuts(shortcutHandlers, true);
+
   return (
     <div className="flex flex-col h-screen bg-zinc-950 text-zinc-100 font-sans select-none overflow-hidden relative">
       <WorkspaceHeader
@@ -408,6 +468,8 @@ export default function App() {
         isExporting={isExporting}
         exportProgress={exportProgress}
         hasVideo={!!videoSrc}
+        helpOpen={helpOpen}
+        onHelpOpenChange={setHelpOpen}
       />
 
       <div className="flex flex-1 overflow-hidden w-full relative">
@@ -444,7 +506,7 @@ export default function App() {
                 translateY={translateY}
                 onZoomChange={setZoomScale}
                 onPanChange={(x, y) => { setTranslateX(x); setTranslateY(y); }}
-                handleResetView={() => { setZoomScale(100); setTranslateX(0); setTranslateY(0); }}
+                handleResetView={handleResetView}
                 previewCanvasRef={previewCanvasRef}
                 captions={captions}
                 captionStyles={captionStyles}

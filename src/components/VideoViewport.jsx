@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { Play, Pause, Maximize2, Volume2, ZoomIn, Move, Undo2, Redo2 } from 'lucide-react';
+import { Play, Pause, Maximize2, Volume2, ZoomIn, ZoomOut, Move, Undo2, Redo2 } from 'lucide-react';
 import { renderCaptionFrame } from '../lib/captionRenderer';
 import CaptionSelectionOverlay from './CaptionSelectionOverlay';
 
@@ -37,40 +37,25 @@ export default function VideoViewport({
   const isViewportDraggingRef = useRef(false);
   const viewportDragStart = useRef({ x: 0, y: 0 });
   const [renderTick, setRenderTick] = useState(0);
+  const [videoAspect, setVideoAspect] = useState('9 / 16');
 
   const captionsRef = useRef(captions);
   useEffect(() => {
     captionsRef.current = captions;
   }, [captions]);
 
-  // --- KEYBOARD SPACEBAR LISTENERS ---
   useEffect(() => {
-    const handleKeyDown = (e) => {
-      const activeTag = document.activeElement?.tagName;
-      if (activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT') {
-        return;
-      }
-
-      if (e.code === 'Space') {
-        e.preventDefault();
-        if (videoSrc) onTogglePlay();
-      }
-
-      const isZ = e.key?.toLowerCase() === 'z';
-      const metaKey = e.ctrlKey || e.metaKey;
-      if (metaKey && isZ) {
-        e.preventDefault();
-        if (e.shiftKey) {
-          if (typeof onRedo === 'function') onRedo();
-        } else {
-          if (typeof onUndo === 'function') onUndo();
-        }
+    const video = videoRef?.current;
+    if (!video) return;
+    const syncAspect = () => {
+      if (video.videoWidth && video.videoHeight) {
+        setVideoAspect(`${video.videoWidth} / ${video.videoHeight}`);
       }
     };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onTogglePlay, videoSrc, onUndo, onRedo]);
+    video.addEventListener('loadedmetadata', syncAspect);
+    syncAspect();
+    return () => video.removeEventListener('loadedmetadata', syncAspect);
+  }, [videoSrc, videoRef]);
 
   const formatTime = (timeInSeconds) => {
     if (isNaN(timeInSeconds)) return "0:00";
@@ -205,15 +190,27 @@ export default function VideoViewport({
     };
   }, [isPlaying, currentTime, captions, captionStyles, videoSrc, videoRef, previewCanvasRef]);
 
+  const zoomIn = () => {
+    const next = Math.min(400, zoomScale + 25);
+    onZoomChange(next);
+  };
+
+  const zoomOut = () => {
+    const next = Math.max(100, zoomScale - 25);
+    onZoomChange(next);
+    if (next <= 100) onPanChange(0, 0);
+  };
+
   return (
     <div className="relative flex-1 bg-zinc-900/40 border border-zinc-800/60 rounded-2xl overflow-hidden flex flex-col justify-between p-3 h-full min-h-0 select-none backdrop-blur-sm">
-      
-      {/* Monitoring Viewport Screen Container Wrapper */}
-      <div 
-  onMouseDown={handleCanvasMouseDown}
-  className="relative flex-1 flex items-center justify-center min-h-0 w-full rounded-xl bg-zinc-950 border border-zinc-900/60 overflow-hidden group shadow-inner pointer-events-auto"
-  style={{ cursor: zoomScale > 100 ? (isViewportDraggingRef.current ? 'grabbing' : 'grab') : 'default' }}
->
+
+      <div
+        onMouseDown={handleCanvasMouseDown}
+        className={`relative flex-1 flex items-center justify-center min-h-0 w-full rounded-xl bg-zinc-950 border border-zinc-900/60 group shadow-inner pointer-events-auto ${
+          zoomScale > 100 ? 'overflow-auto' : 'overflow-hidden'
+        }`}
+        style={{ cursor: zoomScale > 100 ? (isViewportDraggingRef.current ? 'grabbing' : 'grab') : 'default' }}
+      >
         <div className="absolute top-3 right-3 z-30 flex items-center gap-1 p-1 rounded-full bg-zinc-950/90 border border-zinc-800 shadow-lg backdrop-blur-sm">
           <button
             type="button"
@@ -252,26 +249,31 @@ export default function VideoViewport({
           crossOrigin="anonymous"
         />
 
-        <div 
-          style={{ 
+        <div
+          style={{
             transform: `translate(${translateX}px, ${translateY}px) scale(${zoomScale / 100})`,
             transformOrigin: 'center center',
             display: videoSrc ? 'flex' : 'none'
           }}
-          className="relative max-h-full max-w-full w-full h-full flex items-center justify-center transition-transform duration-75 ease-out pointer-events-none"
+          className="relative flex items-center justify-center min-h-full min-w-full p-6 transition-transform duration-75 ease-out shrink-0"
         >
-          <div className="relative max-h-full max-w-full w-full h-full flex items-center justify-center pointer-events-auto">
-            <canvas
-              ref={previewCanvasRef}
-              className="max-h-full max-w-full object-contain bg-black shadow-2xl"
-              style={{ aspectRatio: '9/16' }}
-            />
+          <div
+            className="relative pointer-events-auto shadow-2xl ring-1 ring-zinc-800/80"
+            style={{
+              aspectRatio: videoAspect,
+              height: zoomScale > 100 ? '70vh' : '100%',
+              maxHeight: '100%',
+              width: 'auto',
+              maxWidth: '100%'
+            }}
+          >
+            <canvas ref={previewCanvasRef} className="block w-full h-full bg-black rounded-sm" />
+
             <CaptionSelectionOverlay
               canvasRef={previewCanvasRef}
               currentTime={currentTime}
               captions={captions}
               activeId={activeId}
-              zoomScale={zoomScale}
               onSelectCaption={onSelectCaption}
               onTransformLive={onTransformLive}
               onTransformCommit={onTransformCommit}
@@ -285,7 +287,7 @@ export default function VideoViewport({
         {zoomScale > 100 && videoSrc && (
           <button 
             onClick={handleResetView}
-            className="absolute top-3 right-3 z-30 bg-zinc-900/80 hover:bg-zinc-800 text-[10px] text-zinc-400 hover:text-white font-mono px-2 py-1 rounded border border-zinc-800 transition backdrop-blur pointer-events-auto"
+            className="absolute top-3 left-3 z-30 bg-zinc-900/80 hover:bg-zinc-800 text-[10px] text-zinc-400 hover:text-white font-mono px-2 py-1 rounded border border-zinc-800 transition backdrop-blur pointer-events-auto"
           >
             Reset View
           </button>
@@ -327,22 +329,44 @@ export default function VideoViewport({
             </div>
           </div>
 
-          <div className="flex items-center gap-2 bg-zinc-950 border border-zinc-900 px-2 py-1 rounded-lg shrink-0">
-            {zoomScale > 100 ? <Move className="w-3 h-3 text-indigo-400" /> : <ZoomIn className="w-3 h-3 text-zinc-500" />}
-            <input 
+          <div
+            className="flex items-center gap-1 bg-zinc-950 border border-zinc-900 px-1.5 py-1 rounded-lg shrink-0"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              disabled={!videoSrc || zoomScale <= 100}
+              onClick={zoomOut}
+              className="p-1 rounded text-zinc-400 hover:text-white hover:bg-zinc-800 disabled:opacity-30 disabled:pointer-events-none"
+              title="Zoom out (Ctrl+-)"
+            >
+              <ZoomOut className="w-3.5 h-3.5" />
+            </button>
+            {zoomScale > 100 ? <Move className="w-3 h-3 text-indigo-400 mx-0.5" /> : <ZoomIn className="w-3 h-3 text-zinc-500 mx-0.5" />}
+            <input
               type="range"
-              min="100" 
-              max="400" 
+              min="100"
+              max="400"
+              step="25"
               disabled={!videoSrc}
               value={zoomScale}
               onChange={(e) => {
                 const nextScale = Number(e.target.value);
                 onZoomChange(nextScale);
-                if (nextScale <= 100) onPanChange(0, 0); 
+                if (nextScale <= 100) onPanChange(0, 0);
               }}
               className="w-16 md:w-24 h-1 bg-zinc-800 appearance-none rounded-lg cursor-pointer accent-indigo-500 focus:outline-none disabled:opacity-20"
             />
-            <span className="text-[9px] font-mono font-bold text-zinc-400 min-w-[28px] text-right">
+            <button
+              type="button"
+              disabled={!videoSrc || zoomScale >= 400}
+              onClick={zoomIn}
+              className="p-1 rounded text-zinc-400 hover:text-white hover:bg-zinc-800 disabled:opacity-30 disabled:pointer-events-none"
+              title="Zoom in (Ctrl++)"
+            >
+              <ZoomIn className="w-3.5 h-3.5" />
+            </button>
+            <span className="text-[9px] font-mono font-bold text-zinc-400 min-w-[32px] text-right pl-1">
               {zoomScale}%
             </span>
           </div>

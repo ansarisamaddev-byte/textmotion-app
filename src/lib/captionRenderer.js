@@ -1,4 +1,4 @@
-﻿const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
+const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
 
 const scaleAroundPoint = (ctx, pivotX, pivotY, scale) => {
   ctx.translate(pivotX, pivotY);
@@ -220,28 +220,41 @@ export const renderCaptionFrame = (ctx, canvas, video, captions, captionStyles) 
 
     const wordPlacements = layoutCaptionWords(ctx, rawText, xPos, bottomY, maxTextWidth, baseSize, textAlign);
 
-    let blockLeft = xPos;
-    let blockRight = xPos;
+    const strokePad = strokeFactor > 0 ? baseSize * strokeFactor * 0.55 : 0;
+    const shadowPad = hasShadow ? baseSize * 0.1 : 0;
+    const padX = 4 + strokePad + shadowPad;
+    const padY = 4 + strokePad + shadowPad * 0.5;
+
+    let blockLeft = Infinity;
+    let blockRight = -Infinity;
     wordPlacements.forEach(w => {
       blockLeft = Math.min(blockLeft, w.x - w.width / 2);
       blockRight = Math.max(blockRight, w.x + w.width / 2);
     });
 
+    if (!Number.isFinite(blockLeft)) {
+      blockLeft = xPos - 40;
+      blockRight = xPos + 40;
+    }
+
     const lineCount = wordPlacements.length
       ? Math.max(...wordPlacements.map(w => w.lineIndex)) + 1
       : 1;
     const totalBlockHeight = lineCount * baseSize * 1.2;
-    const topY = bottomY - totalBlockHeight;
-    const blockWidth = Math.max(blockRight - blockLeft, 1);
+    const tightTop = bottomY - totalBlockHeight;
+    const tightLeft = blockLeft - padX;
+    const tightRight = blockRight + padX;
+    const tightTopY = tightTop - padY;
+    const tightBottomY = bottomY + padY * 0.35;
 
     activeCap._metaBoundingBox = {
-      centerX: xPos,
-      bottomY,
-      topY,
-      left: blockLeft,
-      right: blockRight,
-      width: blockWidth,
-      height: totalBlockHeight
+      centerX: (tightLeft + tightRight) / 2,
+      bottomY: tightBottomY,
+      topY: tightTopY,
+      left: tightLeft,
+      right: tightRight,
+      width: tightRight - tightLeft,
+      height: tightBottomY - tightTopY
     };
 
     const renderWord = (word, progress) => {
