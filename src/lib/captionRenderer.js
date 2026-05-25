@@ -83,7 +83,7 @@ const applyAnimationTransform = (ctx, animation, eased, raw, elapsed, pivotX, pi
   }
 };
 
-const layoutCaptionWords = (ctx, text, centerX, bottomY, maxWidth, baseSize) => {
+const layoutCaptionWords = (ctx, text, anchorX, bottomY, maxWidth, baseSize, textAlign = 'center') => {
   const tokens = text.split(/\s+/).filter(Boolean);
   if (!tokens.length) return [];
 
@@ -112,7 +112,14 @@ const layoutCaptionWords = (ctx, text, centerX, bottomY, maxWidth, baseSize) => 
 
   lines.forEach((line, lineIdx) => {
     const lineWidth = line.reduce((sum, t, i) => sum + t.width + (i ? space : 0), 0);
-    let x = centerX - lineWidth / 2;
+    let x;
+    if (textAlign === 'left') {
+      x = anchorX - maxWidth / 2;
+    } else if (textAlign === 'right') {
+      x = anchorX + maxWidth / 2 - lineWidth;
+    } else {
+      x = anchorX - lineWidth / 2;
+    }
     const y = bottomY - (totalLines - 1 - lineIdx) * lineHeight;
 
     line.forEach((token) => {
@@ -167,6 +174,7 @@ export const renderCaptionFrame = (ctx, canvas, video, captions, captionStyles) 
     const fontStyle = activeCap.fontStyle || captionStyles.fontStyle || 'normal';
     const color = activeCap.color || captionStyles.color || '#fbbf24';
     const textTransform = activeCap.textTransform || captionStyles.textTransform || 'uppercase';
+    const textAlign = activeCap.textAlign || captionStyles.textAlign || 'center';
 
     const strokeColor = activeCap.strokeColor || captionStyles.strokeColor || '#000000';
     const strokeFactor = activeCap.strokeWidth !== undefined ? activeCap.strokeWidth : (captionStyles.strokeWidth !== undefined ? captionStyles.strokeWidth : 0.14);
@@ -210,51 +218,31 @@ export const renderCaptionFrame = (ctx, canvas, video, captions, captionStyles) 
     const pivotX = xPos;
     const pivotY = bottomY;
 
-    const wordPlacements = layoutCaptionWords(ctx, rawText, xPos, bottomY, maxTextWidth, baseSize);
+    const wordPlacements = layoutCaptionWords(ctx, rawText, xPos, bottomY, maxTextWidth, baseSize, textAlign);
 
-    let calculatedMaxWidth = 0;
-    let minY = bottomY;
-    let maxY = bottomY;
+    let blockLeft = xPos;
+    let blockRight = xPos;
     wordPlacements.forEach(w => {
-      calculatedMaxWidth = Math.max(calculatedMaxWidth, w.width);
-      minY = Math.min(minY, w.y - baseSize);
-      maxY = Math.max(maxY, w.y);
+      blockLeft = Math.min(blockLeft, w.x - w.width / 2);
+      blockRight = Math.max(blockRight, w.x + w.width / 2);
     });
 
     const lineCount = wordPlacements.length
       ? Math.max(...wordPlacements.map(w => w.lineIndex)) + 1
       : 1;
     const totalBlockHeight = lineCount * baseSize * 1.2;
+    const topY = bottomY - totalBlockHeight;
+    const blockWidth = Math.max(blockRight - blockLeft, 1);
 
     activeCap._metaBoundingBox = {
       centerX: xPos,
       bottomY,
-      topY: bottomY - totalBlockHeight,
-      width: calculatedMaxWidth,
+      topY,
+      left: blockLeft,
+      right: blockRight,
+      width: blockWidth,
       height: totalBlockHeight
     };
-
-    if (canvas.hasAttribute('data-dragging-active')) {
-      ctx.save();
-      ctx.strokeStyle = 'rgba(99, 102, 241, 0.85)';
-      ctx.lineWidth = 3;
-      ctx.setLineDash([6, 4]);
-      const boxWidth = Math.max(
-        wordPlacements.reduce((sum, w, i, arr) => {
-          const lineWords = arr.filter(x => x.lineIndex === w.lineIndex);
-          const lw = lineWords.reduce((s, t, idx) => s + t.width + (idx ? ctx.measureText(' ').width : 0), 0);
-          return Math.max(sum, lw);
-        }, 0),
-        calculatedMaxWidth
-      );
-      ctx.strokeRect(
-        xPos - boxWidth / 2 - 16,
-        activeCap._metaBoundingBox.topY - 8,
-        boxWidth + 32,
-        totalBlockHeight + 16
-      );
-      ctx.restore();
-    }
 
     const renderWord = (word, progress) => {
       if (animation === 'none' || progress.raw <= 0) {

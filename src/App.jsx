@@ -13,7 +13,6 @@ import { INITIAL_CAPTIONS, DEFAULT_CAPTION_STYLES, DEFAULT_CAPTION_FIELDS } from
 import { STYLE_PRESETS } from './constants/stylePresets';
 import { stylesFromCaption, reorderCaptions } from './utils/captionStyles';
 import { useUndoRedo } from './hooks/useUndoRedo';
-import { useCanvasTextDrag } from './hooks/useCanvasTextDrag';
 import { exportVideo } from './services/videoExport';
 
 export { STYLE_PRESETS } from './constants/stylePresets';
@@ -108,22 +107,16 @@ export default function App() {
     }
   }, []);
 
-  const handleCaptionMove = useCallback((updatedCaptions) => {
-    dispatchChange(updatedCaptions, captionStylesRef.current);
-  }, [dispatchChange]);
+  const handleTransformLive = useCallback((id, props) => {
+    updateCaptionsLive(
+      captionsRef.current.map(c => (c.id === id ? { ...c, ...props } : c))
+    );
+    refreshCanvas();
+  }, [updateCaptionsLive, refreshCanvas]);
 
-  useCanvasTextDrag({
-    previewCanvasRef,
-    videoRef,
-    captionsRef,
-    currentTimeRef,
-    captionStylesRef,
-    zoomScaleRef,
-    translateXRef,
-    translateYRef,
-    setIsDraggingText,
-    onDragCommit: handleCaptionMove
-  });
+  const handleTransformCommit = useCallback(() => {
+    dispatchChange(captionsRef.current, captionStylesRef.current);
+  }, [dispatchChange]);
 
   useEffect(() => {
     return () => {
@@ -455,7 +448,12 @@ export default function App() {
                 previewCanvasRef={previewCanvasRef}
                 captions={captions}
                 captionStyles={captionStyles}
-                onCaptionMove={handleCaptionMove}
+                activeId={activeId}
+                onSelectCaption={handleSelectCaption}
+                onTransformLive={handleTransformLive}
+                onTransformCommit={handleTransformCommit}
+                beginTransaction={beginTransaction}
+                endTransaction={endTransaction}
                 onUndo={undo}
                 onRedo={redo}
                 canUndo={canUndo}

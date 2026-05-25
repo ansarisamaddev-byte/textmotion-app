@@ -8,6 +8,7 @@ export function stylesFromCaption(caption, baseStyles) {
     fontStyle: caption.fontStyle || baseStyles.fontStyle,
     color: caption.color || baseStyles.color,
     textTransform: caption.textTransform || baseStyles.textTransform,
+    textAlign: caption.textAlign || baseStyles.textAlign || 'center',
     strokeColor: caption.strokeColor || baseStyles.strokeColor,
     strokeWidth: caption.strokeWidth !== undefined ? caption.strokeWidth : baseStyles.strokeWidth,
     shadow: caption.shadow !== undefined ? caption.shadow : baseStyles.shadow,
