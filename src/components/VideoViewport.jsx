@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Play, Pause, Maximize2, Volume2, ZoomIn, Move, Undo2, Redo2 } from 'lucide-react';
-import { renderCaptionFrame } from '../App';
+import { renderCaptionFrame } from '../lib/captionRenderer';
 
 export default function VideoViewport({ 
   videoSrc, 
