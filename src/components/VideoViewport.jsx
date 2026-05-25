@@ -1,6 +1,7 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Play, Pause, Maximize2, Volume2, ZoomIn, Move, Undo2, Redo2 } from 'lucide-react';
-import { renderCaptionFrame } from '../App';
+import React, { useRef, useEffect, useState } from 'react';
+import { Play, Pause, Maximize2, Volume2, ZoomIn, ZoomOut, Move, Undo2, Redo2 } from 'lucide-react';
+import { renderCaptionFrame } from '../lib/captionRenderer';
+import CaptionSelectionOverlay from './CaptionSelectionOverlay';
 
 export default function VideoViewport({ 
   videoSrc, 
@@ -26,46 +27,35 @@ export default function VideoViewport({
   onZoomChange,   
   onPanChange,    
   handleResetView,
-  onCaptionMove      
+  activeId,
+  onSelectCaption,
+  onTransformLive,
+  onTransformCommit,
+  beginTransaction,
+  endTransaction
 }) {
   const isViewportDraggingRef = useRef(false);
-  
   const viewportDragStart = useRef({ x: 0, y: 0 });
-  const textDragConfig = useRef(null); 
+  const [renderTick, setRenderTick] = useState(0);
+  const [videoAspect, setVideoAspect] = useState('9 / 16');
 
   const captionsRef = useRef(captions);
   useEffect(() => {
     captionsRef.current = captions;
   }, [captions]);
 
-  // --- KEYBOARD SPACEBAR LISTENERS ---
   useEffect(() => {
-    const handleKeyDown = (e) => {
-      const activeTag = document.activeElement?.tagName;
-      if (activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT') {
-        return;
-      }
-
-      if (e.code === 'Space') {
-        e.preventDefault();
-        if (videoSrc) onTogglePlay();
-      }
-
-      const isZ = e.key?.toLowerCase() === 'z';
-      const metaKey = e.ctrlKey || e.metaKey;
-      if (metaKey && isZ) {
-        e.preventDefault();
-        if (e.shiftKey) {
-          if (typeof onRedo === 'function') onRedo();
-        } else {
-          if (typeof onUndo === 'function') onUndo();
-        }
+    const video = videoRef?.current;
+    if (!video) return;
+    const syncAspect = () => {
+      if (video.videoWidth && video.videoHeight) {
+        setVideoAspect(`${video.videoWidth} / ${video.videoHeight}`);
       }
     };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onTogglePlay, videoSrc, onUndo, onRedo]);
+    video.addEventListener('loadedmetadata', syncAspect);
+    syncAspect();
+    return () => video.removeEventListener('loadedmetadata', syncAspect);
+  }, [videoSrc, videoRef]);
 
   const formatTime = (timeInSeconds) => {
     if (isNaN(timeInSeconds)) return "0:00";
@@ -111,125 +101,51 @@ export default function VideoViewport({
     };
   };
 
-  let previewCaptions = null;
-
   const handleCanvasMouseDown = (e) => {
-  const canvas = previewCanvasRef.current;
-  const container = e.currentTarget; 
-  if (!canvas || !videoSrc) return;
+    const canvas = previewCanvasRef.current;
+    if (!canvas || !videoSrc) return;
 
-  // 1. Caption text hit tracking
-  const activeCap = captionsRef.current?.find(c => currentTime >= c.start && currentTime <= c.end);
-  let textDragTriggered = false;
-  
-  if (activeCap && activeCap._metaBoundingBox) {
-    const { canvasX, canvasY, viewportWidth, viewportHeight } = getCanvasRelativeCoords(e.clientX, e.clientY, canvas, container);
-    const box = activeCap._metaBoundingBox;
+    const activeCap = captionsRef.current?.find(
+      c => currentTime >= c.start && currentTime <= c.end
+    );
 
-    const isWithinX = canvasX >= (box.centerX - (box.width / 2) - 40) && canvasX <= (box.centerX + (box.width / 2) + 40);
-    const isWithinY = canvasY >= (box.topY - 40) && canvasY <= (box.bottomY + 40);
+    if (activeCap?._metaBoundingBox) {
+      const { canvasX, canvasY } = getCanvasRelativeCoords(e.clientX, e.clientY, canvas, e.currentTarget);
+      const box = activeCap._metaBoundingBox;
+      const pad = 12;
+      const hit =
+        canvasX >= box.left - pad &&
+        canvasX <= box.right + pad &&
+        canvasY >= box.topY - pad &&
+        canvasY <= box.bottomY + pad;
 
-    if (isWithinX && isWithinY) {
-      e.preventDefault();
-      previewCaptions = captionsRef.current.map(item => ({ ...item }));
-      textDragConfig.current = {
-        captionId: activeCap.id,
-        initialXRel: activeCap.xRel !== undefined ? activeCap.xRel : 0.5,
-        initialYRel: activeCap.yRel !== undefined ? activeCap.yRel : 0.82,
-        startX: e.clientX,
-        startY: e.clientY,
-        viewportWidth,
-        viewportHeight
-      };
-
-      textDragTriggered = true;
-      window.addEventListener('mousemove', handleGlobalMouseMove, { passive: true });
-      window.addEventListener('mouseup', handleGlobalMouseUp);
+      if (hit) {
+        e.preventDefault();
+        onSelectCaption?.(activeCap.id);
+        return;
+      }
     }
-  }
 
-  // 2. FALLBACK: Frame panning activation paths
-  if (!textDragTriggered) {
-    // ✅ Change this to update the ref pointer instantly
-    isViewportDraggingRef.current = true; 
+    isViewportDraggingRef.current = true;
     viewportDragStart.current = { x: e.clientX - translateX, y: e.clientY - translateY };
-    
     window.addEventListener('mousemove', handleGlobalMouseMove, { passive: true });
     window.addEventListener('mouseup', handleGlobalMouseUp);
-  }
-};
+  };
 
-const handleGlobalMouseMove = (e) => {
-  if (textDragConfig.current) {
-    const config = textDragConfig.current;
-    const canvas = previewCanvasRef.current;
-    const video = videoRef.current;
-    if (!canvas || !video) return;
-
-    const currentDeltaX = e.clientX - config.startX;
-    const currentDeltaY = e.clientY - config.startY;
-
-    const currentScaleMultiplier = zoomScale / 100;
-    const changeXRel = (currentDeltaX / currentScaleMultiplier) / config.viewportWidth;
-    const changeYRel = (currentDeltaY / currentScaleMultiplier) / config.viewportHeight;
-
-    const calculatedX = Math.max(0.01, Math.min(0.99, config.initialXRel + changeXRel));
-    const calculatedY = Math.max(0.01, Math.min(0.99, config.initialYRel + changeYRel));
-
-    const activeCap = previewCaptions?.find(c => c.id === config.captionId);
-    if (activeCap) {
-      activeCap.xRel = calculatedX;
-      activeCap.yRel = calculatedY;
+  const handleGlobalMouseMove = (e) => {
+    if (isViewportDraggingRef.current) {
+      onPanChange(
+        e.clientX - viewportDragStart.current.x,
+        e.clientY - viewportDragStart.current.y
+      );
     }
+  };
 
-    const ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    renderCaptionFrame(ctx, canvas, video, previewCaptions || [], captionStyles);
-    
-  // ✅ Read directly from the instant pointer ref value now
-  } else if (isViewportDraggingRef.current) {
-    onPanChange(
-      e.clientX - viewportDragStart.current.x,
-      e.clientY - viewportDragStart.current.y
-    );
-  }
-};
-
-const handleGlobalMouseUp = (e) => {
-  window.removeEventListener('mousemove', handleGlobalMouseMove);
-  window.removeEventListener('mouseup', handleGlobalMouseUp);
-
-  if (textDragConfig.current) {
-    const config = textDragConfig.current;
-    
-    const finalDeltaX = e.clientX - config.startX;
-    const finalDeltaY = e.clientY - config.startY;
-
-    const currentScaleMultiplier = zoomScale / 100;
-    const changeXRel = (finalDeltaX / currentScaleMultiplier) / config.viewportWidth;
-    const changeYRel = (finalDeltaY / currentScaleMultiplier) / config.viewportHeight;
-
-    const calculatedX = Math.max(0.01, Math.min(0.99, config.initialXRel + changeXRel));
-    const calculatedY = Math.max(0.01, Math.min(0.99, config.initialYRel + changeYRel));
-
-    const updatedCaptions = (previewCaptions || captionsRef.current).map(item => {
-      if (item.id === config.captionId) {
-        return { ...item, xRel: calculatedX, yRel: calculatedY };
-      }
-      return item;
-    });
-
-    if (typeof onCaptionMove === 'function') {
-      onCaptionMove(updatedCaptions);
-    }
-
-    textDragConfig.current = null;
-    previewCaptions = null;
-  }
-  
-  // ✅ Clean up the ref pointer instantly when dragging ends
-  isViewportDraggingRef.current = false; 
-};
+  const handleGlobalMouseUp = () => {
+    window.removeEventListener('mousemove', handleGlobalMouseMove);
+    window.removeEventListener('mouseup', handleGlobalMouseUp);
+    isViewportDraggingRef.current = false;
+  };
 
   // Canvas Synchronization Pipeline
   useEffect(() => {
@@ -251,12 +167,11 @@ const handleGlobalMouseUp = (e) => {
       }
 
       renderCaptionFrame(ctx, canvas, video, captions || [], captionStyles);
+      setRenderTick(t => t + 1);
     };
 
     const playbackLoop = () => {
-      if (!textDragConfig.current) {
-        syncCanvasAndDraw(true); 
-      }
+      syncCanvasAndDraw(true);
       if (!video.paused && !video.ended) {
         frameId = requestAnimationFrame(playbackLoop);
       }
@@ -275,15 +190,27 @@ const handleGlobalMouseUp = (e) => {
     };
   }, [isPlaying, currentTime, captions, captionStyles, videoSrc, videoRef, previewCanvasRef]);
 
+  const zoomIn = () => {
+    const next = Math.min(400, zoomScale + 25);
+    onZoomChange(next);
+  };
+
+  const zoomOut = () => {
+    const next = Math.max(100, zoomScale - 25);
+    onZoomChange(next);
+    if (next <= 100) onPanChange(0, 0);
+  };
+
   return (
     <div className="relative flex-1 bg-zinc-900/40 border border-zinc-800/60 rounded-2xl overflow-hidden flex flex-col justify-between p-3 h-full min-h-0 select-none backdrop-blur-sm">
-      
-      {/* Monitoring Viewport Screen Container Wrapper */}
-      <div 
-  onMouseDown={handleCanvasMouseDown}
-  className="relative flex-1 flex items-center justify-center min-h-0 w-full rounded-xl bg-zinc-950 border border-zinc-900/60 overflow-hidden group shadow-inner pointer-events-auto"
-  style={{ cursor: zoomScale > 100 ? (isViewportDraggingRef.current ? 'grabbing' : 'grab') : 'default' }}
->
+
+      <div
+        onMouseDown={handleCanvasMouseDown}
+        className={`relative flex-1 flex items-center justify-center min-h-0 w-full rounded-xl bg-zinc-950 border border-zinc-900/60 group shadow-inner pointer-events-auto ${
+          zoomScale > 100 ? 'overflow-auto' : 'overflow-hidden'
+        }`}
+        style={{ cursor: zoomScale > 100 ? (isViewportDraggingRef.current ? 'grabbing' : 'grab') : 'default' }}
+      >
         <div className="absolute top-3 right-3 z-30 flex items-center gap-1 p-1 rounded-full bg-zinc-950/90 border border-zinc-800 shadow-lg backdrop-blur-sm">
           <button
             type="button"
@@ -322,25 +249,45 @@ const handleGlobalMouseUp = (e) => {
           crossOrigin="anonymous"
         />
 
-        <div 
-          style={{ 
+        <div
+          style={{
             transform: `translate(${translateX}px, ${translateY}px) scale(${zoomScale / 100})`,
             transformOrigin: 'center center',
             display: videoSrc ? 'flex' : 'none'
           }}
-          className="relative max-h-full max-w-full w-full h-full flex items-center justify-center transition-transform duration-75 ease-out pointer-events-none"
+          className="relative flex items-center justify-center min-h-full min-w-full p-6 transition-transform duration-75 ease-out shrink-0"
         >
-          <canvas
-            ref={previewCanvasRef} 
-            className="max-h-full max-w-full object-contain bg-black shadow-2xl pointer-events-auto"
-            style={{ aspectRatio: '9/16' }}
-          />
+          <div
+            className="relative pointer-events-auto shadow-2xl ring-1 ring-zinc-800/80"
+            style={{
+              aspectRatio: videoAspect,
+              height: zoomScale > 100 ? '70vh' : '100%',
+              maxHeight: '100%',
+              width: 'auto',
+              maxWidth: '100%'
+            }}
+          >
+            <canvas ref={previewCanvasRef} className="block w-full h-full bg-black rounded-sm" />
+
+            <CaptionSelectionOverlay
+              canvasRef={previewCanvasRef}
+              currentTime={currentTime}
+              captions={captions}
+              activeId={activeId}
+              onSelectCaption={onSelectCaption}
+              onTransformLive={onTransformLive}
+              onTransformCommit={onTransformCommit}
+              beginTransaction={beginTransaction}
+              endTransaction={endTransaction}
+              renderTick={renderTick}
+            />
+          </div>
         </div>
 
         {zoomScale > 100 && videoSrc && (
           <button 
             onClick={handleResetView}
-            className="absolute top-3 right-3 z-30 bg-zinc-900/80 hover:bg-zinc-800 text-[10px] text-zinc-400 hover:text-white font-mono px-2 py-1 rounded border border-zinc-800 transition backdrop-blur pointer-events-auto"
+            className="absolute top-3 left-3 z-30 bg-zinc-900/80 hover:bg-zinc-800 text-[10px] text-zinc-400 hover:text-white font-mono px-2 py-1 rounded border border-zinc-800 transition backdrop-blur pointer-events-auto"
           >
             Reset View
           </button>
@@ -382,22 +329,44 @@ const handleGlobalMouseUp = (e) => {
             </div>
           </div>
 
-          <div className="flex items-center gap-2 bg-zinc-950 border border-zinc-900 px-2 py-1 rounded-lg shrink-0">
-            {zoomScale > 100 ? <Move className="w-3 h-3 text-indigo-400" /> : <ZoomIn className="w-3 h-3 text-zinc-500" />}
-            <input 
+          <div
+            className="flex items-center gap-1 bg-zinc-950 border border-zinc-900 px-1.5 py-1 rounded-lg shrink-0"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              disabled={!videoSrc || zoomScale <= 100}
+              onClick={zoomOut}
+              className="p-1 rounded text-zinc-400 hover:text-white hover:bg-zinc-800 disabled:opacity-30 disabled:pointer-events-none"
+              title="Zoom out (Ctrl+-)"
+            >
+              <ZoomOut className="w-3.5 h-3.5" />
+            </button>
+            {zoomScale > 100 ? <Move className="w-3 h-3 text-indigo-400 mx-0.5" /> : <ZoomIn className="w-3 h-3 text-zinc-500 mx-0.5" />}
+            <input
               type="range"
-              min="100" 
-              max="400" 
+              min="100"
+              max="400"
+              step="25"
               disabled={!videoSrc}
               value={zoomScale}
               onChange={(e) => {
                 const nextScale = Number(e.target.value);
                 onZoomChange(nextScale);
-                if (nextScale <= 100) onPanChange(0, 0); 
+                if (nextScale <= 100) onPanChange(0, 0);
               }}
               className="w-16 md:w-24 h-1 bg-zinc-800 appearance-none rounded-lg cursor-pointer accent-indigo-500 focus:outline-none disabled:opacity-20"
             />
-            <span className="text-[9px] font-mono font-bold text-zinc-400 min-w-[28px] text-right">
+            <button
+              type="button"
+              disabled={!videoSrc || zoomScale >= 400}
+              onClick={zoomIn}
+              className="p-1 rounded text-zinc-400 hover:text-white hover:bg-zinc-800 disabled:opacity-30 disabled:pointer-events-none"
+              title="Zoom in (Ctrl++)"
+            >
+              <ZoomIn className="w-3.5 h-3.5" />
+            </button>
+            <span className="text-[9px] font-mono font-bold text-zinc-400 min-w-[32px] text-right pl-1">
               {zoomScale}%
             </span>
           </div>

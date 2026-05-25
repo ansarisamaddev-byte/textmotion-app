@@ -1,7 +1,7 @@
 import React, { useRef, useState, useEffect, useMemo } from 'react';
 import { Clock, Film, ZoomIn, ZoomOut } from 'lucide-react';
 
-export default function TimelineTrack({ videoSrc, captions = [], currentTime, duration, activeId, onSeek }) {
+export default function TimelineTrack({ videoSrc, captions = [], currentTime, duration, activeId, onSeek, onSelectCaption }) {
   const trackRef = useRef(null);
   const scrollContainerRef = useRef(null);
   const [zoomLevel, setZoomLevel] = useState(1); 
@@ -247,19 +247,27 @@ export default function TimelineTrack({ videoSrc, captions = [], currentTime, du
 
             {/* Subtitle Blocks Sub-track Layer */}
             <div className="h-10 relative flex items-center">
-              {duration > 0 && captions.map((cap) => {
+              {duration > 0 && captions.map((cap, orderIndex) => {
                 const leftPct = (cap.start / duration) * 100;
                 const widthPct = ((cap.end - cap.start) / duration) * 100;
                 return (
                   <div
                     key={cap.id}
-                    className={`absolute h-8 rounded-md text-[10px] px-2 flex items-center border font-medium overflow-hidden whitespace-nowrap text-ellipsis cursor-pointer transition-all ${
-                      cap.id === activeId ? 'bg-indigo-500/20 border-indigo-500 text-indigo-200 z-10 shadow-sm' : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                    className={`absolute h-8 rounded-md text-[10px] pl-6 pr-2 flex items-center gap-1 border font-medium overflow-hidden whitespace-nowrap text-ellipsis cursor-pointer transition-all ${
+                      cap.id === activeId ? 'bg-indigo-500/25 border-indigo-400 text-indigo-100 z-10 shadow-sm ring-1 ring-indigo-500/40' : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-600'
                     }`}
-                    style={{ left: `${leftPct}%`, width: `${widthPct}%`, minWidth: '40px' }}
-                    onClick={(e) => { e.stopPropagation(); onSeek(cap.start); }}
+                    style={{ left: `${leftPct}%`, width: `${widthPct}%`, minWidth: '48px' }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSelectCaption?.(cap.id);
+                      onSeek(cap.start);
+                    }}
+                    title={`#${orderIndex + 1}: ${cap.text || 'Empty'}`}
                   >
-                    <span className="truncate w-full text-left">{cap.text || "(Empty)"}</span>
+                    <span className="absolute left-1 top-1/2 -translate-y-1/2 text-[8px] font-bold text-indigo-400/90 min-w-[12px]">
+                      {orderIndex + 1}
+                    </span>
+                    <span className="truncate w-full text-left">{cap.text || '(Empty)'}</span>
                   </div>
                 );
               })}

@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Edit3, Trash2, Plus, Clock, AlertCircle, Palette, Sliders, Layers, Bold, Italic, Underline, Strikethrough } from 'lucide-react';
-import { STYLE_PRESETS } from '../App';
+import { STYLE_PRESETS } from '../src/constants/stylePresets';
 
 export default function CaptionEditor({ 
   initialCaptions = [], 
