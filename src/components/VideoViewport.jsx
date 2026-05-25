@@ -2,6 +2,7 @@ import React, { useRef, useEffect, useState } from 'react';
 import { Play, Pause, Maximize2, Volume2, ZoomIn, ZoomOut, Move, Undo2, Redo2 } from 'lucide-react';
 import { renderCaptionFrame } from '../lib/captionRenderer';
 import CaptionSelectionOverlay from './CaptionSelectionOverlay';
+import ElementSelectionOverlay from './ElementSelectionOverlay';
 
 export default function VideoViewport({ 
   videoSrc, 
@@ -9,7 +10,8 @@ export default function VideoViewport({
   isPlaying, 
   currentTime, 
   duration, 
-  captions, 
+  captions,
+  elements = [],
   captionStyles,    
   onTogglePlay, 
   onUndo,
@@ -28,9 +30,13 @@ export default function VideoViewport({
   onPanChange,    
   handleResetView,
   activeId,
+  activeElementId,
   onSelectCaption,
+  onSelectElement,
   onTransformLive,
   onTransformCommit,
+  onElementTransformLive,
+  onElementTransformCommit,
   beginTransaction,
   endTransaction
 }) {
@@ -40,9 +46,13 @@ export default function VideoViewport({
   const [videoAspect, setVideoAspect] = useState('9 / 16');
 
   const captionsRef = useRef(captions);
+  const elementsRef = useRef(elements);
   useEffect(() => {
     captionsRef.current = captions;
   }, [captions]);
+  useEffect(() => {
+    elementsRef.current = elements;
+  }, [elements]);
 
   useEffect(() => {
     const video = videoRef?.current;
@@ -105,11 +115,33 @@ export default function VideoViewport({
     const canvas = previewCanvasRef.current;
     if (!canvas || !videoSrc) return;
 
+    const visibleElements = (elementsRef.current || [])
+      .filter(el => currentTime >= el.start && currentTime <= el.end)
+      .sort((a, b) => (b.layer ?? 0) - (a.layer ?? 0));
+
+    for (let i = 0; i < visibleElements.length; i++) {
+      const el = visibleElements[i];
+      if (!el._metaBoundingBox) continue;
+      const { canvasX, canvasY } = getCanvasRelativeCoords(e.clientX, e.clientY, canvas, e.currentTarget);
+      const box = el._metaBoundingBox;
+      const pad = box.hitPad ?? 14;
+      const hit =
+        canvasX >= box.left - pad &&
+        canvasX <= box.right + pad &&
+        canvasY >= box.topY - pad &&
+        canvasY <= box.bottomY + pad;
+      if (hit) {
+        e.preventDefault();
+        onSelectElement?.(el.id);
+        return;
+      }
+    }
+
     const activeCap = captionsRef.current?.find(
       c => currentTime >= c.start && currentTime <= c.end
     );
 
-    if (activeCap?._metaBoundingBox) {
+    if (activeCap?._metaBoundingBox && !activeElementId) {
       const { canvasX, canvasY } = getCanvasRelativeCoords(e.clientX, e.clientY, canvas, e.currentTarget);
       const box = activeCap._metaBoundingBox;
       const pad = 12;
@@ -166,7 +198,7 @@ export default function VideoViewport({
         ctx.clearRect(0, 0, canvas.width, canvas.height);
       }
 
-      renderCaptionFrame(ctx, canvas, video, captions || [], captionStyles);
+      renderCaptionFrame(ctx, canvas, video, captions || [], captionStyles, elements || []);
       setRenderTick(t => t + 1);
     };
 
@@ -188,7 +220,7 @@ export default function VideoViewport({
       window.removeEventListener('mousemove', handleGlobalMouseMove);
       window.removeEventListener('mouseup', handleGlobalMouseUp);
     };
-  }, [isPlaying, currentTime, captions, captionStyles, videoSrc, videoRef, previewCanvasRef]);
+  }, [isPlaying, currentTime, captions, elements, captionStyles, videoSrc, videoRef, previewCanvasRef]);
 
   const zoomIn = () => {
     const next = Math.min(400, zoomScale + 25);
@@ -269,18 +301,33 @@ export default function VideoViewport({
           >
             <canvas ref={previewCanvasRef} className="block w-full h-full bg-black rounded-sm" />
 
-            <CaptionSelectionOverlay
-              canvasRef={previewCanvasRef}
-              currentTime={currentTime}
-              captions={captions}
-              activeId={activeId}
-              onSelectCaption={onSelectCaption}
-              onTransformLive={onTransformLive}
-              onTransformCommit={onTransformCommit}
-              beginTransaction={beginTransaction}
-              endTransaction={endTransaction}
-              renderTick={renderTick}
-            />
+            {activeElementId ? (
+              <ElementSelectionOverlay
+                canvasRef={previewCanvasRef}
+                currentTime={currentTime}
+                elements={elements}
+                activeElementId={activeElementId}
+                onSelectElement={onSelectElement}
+                onTransformLive={onElementTransformLive}
+                onTransformCommit={onElementTransformCommit}
+                beginTransaction={beginTransaction}
+                endTransaction={endTransaction}
+                renderTick={renderTick}
+              />
+            ) : (
+              <CaptionSelectionOverlay
+                canvasRef={previewCanvasRef}
+                currentTime={currentTime}
+                captions={captions}
+                activeId={activeId}
+                onSelectCaption={onSelectCaption}
+                onTransformLive={onTransformLive}
+                onTransformCommit={onTransformCommit}
+                beginTransaction={beginTransaction}
+                endTransaction={endTransaction}
+                renderTick={renderTick}
+              />
+            )}
           </div>
         </div>
 

@@ -5,6 +5,8 @@ import VideoViewport from './components/VideoViewport';
 import TimelineTrack from './components/TimelineTrack';
 import ExportOverlay from './components/ExportOverlay';
 import EditorToolsMenu from './components/editor/EditorToolsMenu';
+import PresetCaptionPanel from './components/editor/PresetCaptionPanel';
+import ElementsPanel from './components/editor/ElementsPanel';
 import StyleEditorPanel from './components/editor/StyleEditorPanel';
 import AnimatePanel from './components/editor/AnimatePanel';
 import { ChevronLeft } from 'lucide-react';
@@ -13,6 +15,17 @@ import { INITIAL_CAPTIONS, DEFAULT_CAPTION_STYLES, DEFAULT_CAPTION_FIELDS } from
 import { STYLE_PRESETS } from './constants/stylePresets';
 import { stylesFromCaption, reorderCaptions } from './utils/captionStyles';
 import { retimeCaptionsSequential } from './utils/captionTiming';
+import { buildStateFromLookPreset } from './utils/applyLookPreset';
+import { createElement } from './utils/elementFactory';
+import {
+  clampClipRange,
+  splitCaptionAtTime,
+  splitElementAtTime,
+  replaceItemWithSplit,
+  resolveCutTarget
+} from './utils/timelineEdit';
+import { remapElementsAfterRemoveTrack } from './utils/elementLayers';
+import { timelineTracksHeight } from './constants/timeline';
 import { useUndoRedo } from './hooks/useUndoRedo';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { exportVideo } from './services/videoExport';
@@ -37,13 +50,17 @@ export default function App() {
   const [translateY, setTranslateY] = useState(0);
   const [activePanel, setActivePanel] = useState('menu');
   const [captionStyles, setCaptionStyles] = useState(DEFAULT_CAPTION_STYLES);
-  const [timelineHeight, setTimelineHeight] = useState(220);
+  const [timelineHeight, setTimelineHeight] = useState(() => Math.max(200, timelineTracksHeight(1) + 44));
   const [helpOpen, setHelpOpen] = useState(false);
+  const [elements, setElements] = useState([]);
+  const [activeElementId, setActiveElementId] = useState(null);
+  const [elementLayerCount, setElementLayerCount] = useState(1);
 
   const videoRef = useRef(null);
   const previewCanvasRef = useRef(null);
   const isExportingRef = useRef(false);
   const captionsRef = useRef(captions);
+  const elementsRef = useRef(elements);
   const currentTimeRef = useRef(currentTime);
   const captionStylesRef = useRef(captionStyles);
   const zoomScaleRef = useRef(zoomScale);
@@ -51,6 +68,7 @@ export default function App() {
   const translateYRef = useRef(translateY);
 
   useEffect(() => { captionsRef.current = captions; }, [captions]);
+  useEffect(() => { elementsRef.current = elements; }, [elements]);
   useEffect(() => { currentTimeRef.current = currentTime; }, [currentTime]);
   useEffect(() => { captionStylesRef.current = captionStyles; }, [captionStyles]);
   useEffect(() => { zoomScaleRef.current = zoomScale; }, [zoomScale]);
@@ -59,19 +77,26 @@ export default function App() {
 
   const getSnapshot = useCallback(() => ({
     captions: captions.map(c => ({ ...c })),
+    elements: (elements || []).map(e => ({ ...e })),
     styles: { ...captionStyles },
     activeId,
+    activeElementId,
+    elementLayerCount,
     selectedIds: [...selectedIds],
     currentTime: videoRef.current ? videoRef.current.currentTime : currentTime
-  }), [captions, captionStyles, activeId, selectedIds, currentTime]);
+  }), [captions, elements, captionStyles, activeId, activeElementId, elementLayerCount, selectedIds, currentTime]);
 
   const applyHistoryState = useCallback((state) => {
     captionsRef.current = state.captions;
+    elementsRef.current = state.elements || [];
     captionStylesRef.current = state.styles;
     currentTimeRef.current = state.currentTime;
     setCaptions(state.captions);
+    setElements(state.elements || []);
     setCaptionStyles(state.styles);
     setActiveId(state.activeId);
+    setActiveElementId(state.activeElementId ?? null);
+    setElementLayerCount(state.elementLayerCount ?? 1);
     setSelectedIds(state.selectedIds);
     setCurrentTime(state.currentTime);
     if (videoRef.current) videoRef.current.currentTime = state.currentTime;
@@ -88,11 +113,19 @@ export default function App() {
     clearHistory
   } = useUndoRedo(getSnapshot, applyHistoryState);
 
-  const dispatchChange = useCallback((newCaptions, newStyles) => {
-    commit(newCaptions, newStyles);
+  const dispatchChange = useCallback((newCaptions, newStyles, newElements) => {
+    const nextElements = newElements !== undefined ? newElements : elementsRef.current;
+    commit(newCaptions, newStyles, nextElements);
     captionsRef.current = newCaptions;
     captionStylesRef.current = newStyles;
+    elementsRef.current = nextElements;
+    setElements(nextElements);
   }, [commit]);
+
+  const updateElementsLive = useCallback((nextElements) => {
+    elementsRef.current = nextElements;
+    setElements(nextElements);
+  }, []);
 
   const updateCaptionsLive = useCallback((nextCaptions) => {
     captionsRef.current = nextCaptions;
@@ -106,9 +139,20 @@ export default function App() {
     const ctx = canvas.getContext('2d');
     if (ctx) {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      renderCaptionFrame(ctx, canvas, video, captionsRef.current, captionStylesRef.current);
+      renderCaptionFrame(ctx, canvas, video, captionsRef.current, captionStylesRef.current, elementsRef.current);
     }
   }, []);
+
+  const handleElementTransformLive = useCallback((id, props) => {
+    updateElementsLive(
+      elementsRef.current.map(el => (el.id === id ? { ...el, ...props } : el))
+    );
+    refreshCanvas();
+  }, [updateElementsLive, refreshCanvas]);
+
+  const handleElementTransformCommit = useCallback(() => {
+    dispatchChange(captionsRef.current, captionStylesRef.current, elementsRef.current);
+  }, [dispatchChange]);
 
   const handleTransformLive = useCallback((id, props) => {
     updateCaptionsLive(
@@ -118,7 +162,7 @@ export default function App() {
   }, [updateCaptionsLive, refreshCanvas]);
 
   const handleTransformCommit = useCallback(() => {
-    dispatchChange(captionsRef.current, captionStylesRef.current);
+    dispatchChange(captionsRef.current, captionStylesRef.current, elementsRef.current);
   }, [dispatchChange]);
 
   useEffect(() => {
@@ -129,7 +173,7 @@ export default function App() {
 
   useEffect(() => {
     refreshCanvas();
-  }, [currentTime, captions, captionStyles, activeId, selectedIds, refreshCanvas]);
+  }, [currentTime, captions, elements, captionStyles, activeId, activeElementId, selectedIds, refreshCanvas]);
 
   useEffect(() => {
     let animId;
@@ -139,7 +183,7 @@ export default function App() {
       if (video && canvas && !video.paused && !video.ended) {
         const ctx = canvas.getContext('2d');
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-        renderCaptionFrame(ctx, canvas, video, captionsRef.current, captionStylesRef.current);
+        renderCaptionFrame(ctx, canvas, video, captionsRef.current, captionStylesRef.current, elementsRef.current);
       }
       animId = requestAnimationFrame(updateLoop);
     };
@@ -185,6 +229,10 @@ export default function App() {
     setIsPlaying(false);
     setCurrentTime(0);
     setDuration(0);
+    setElements([]);
+    setActiveElementId(null);
+    setElementLayerCount(1);
+    elementsRef.current = [];
     clearHistory();
   };
 
@@ -209,6 +257,7 @@ export default function App() {
   };
 
   const handleSelectCaption = (id) => {
+    setActiveElementId(null);
     setSelectedIds([id]);
     setActiveId(id);
     const targeted = captions.find(c => c.id === id);
@@ -273,10 +322,171 @@ export default function App() {
     setTranslateY(0);
   }, []);
 
+  const handleSelectElement = useCallback((id) => {
+    setActiveElementId(id);
+    setActiveId(null);
+    setSelectedIds([]);
+    const el = elementsRef.current.find(e => e.id === id);
+    if (!el || !videoRef.current) return;
+    const video = videoRef.current;
+    const t = video.currentTime;
+    const inRange = t >= el.start && t <= el.end;
+    const seekTime = inRange
+      ? t
+      : el.start + Math.min(0.2, Math.max(0.05, (el.end - el.start) * 0.15));
+
+    const afterSeek = () => {
+      setCurrentTime(seekTime);
+      currentTimeRef.current = seekTime;
+      refreshCanvas();
+      video.removeEventListener('seeked', afterSeek);
+    };
+
+    if (!inRange || Math.abs(t - seekTime) > 0.02) {
+      video.addEventListener('seeked', afterSeek);
+      video.currentTime = seekTime;
+    } else {
+      afterSeek();
+    }
+  }, [refreshCanvas]);
+
+  const handleCaptionTimeLive = useCallback((id, { start, end }) => {
+    const cap = captionsRef.current.find(c => c.id === id);
+    if (!cap || !duration) return;
+    const range = clampClipRange(start ?? cap.start, end ?? cap.end, duration);
+    updateCaptionsLive(
+      captionsRef.current.map(c => (c.id === id ? { ...c, ...range } : c))
+    );
+  }, [duration, updateCaptionsLive]);
+
+  useEffect(() => {
+    const minH = timelineTracksHeight(elementLayerCount) + 44;
+    setTimelineHeight(prev => Math.max(prev, minH));
+  }, [elementLayerCount]);
+
+  const handleElementTimeLive = useCallback((id, { start, end }) => {
+    const el = elementsRef.current.find(e => e.id === id);
+    if (!el || !duration) return;
+    const range = clampClipRange(start ?? el.start, end ?? el.end, duration);
+    updateElementsLive(
+      elementsRef.current.map(e => (e.id === id ? { ...e, ...range } : e))
+    );
+    refreshCanvas();
+  }, [duration, updateElementsLive, refreshCanvas]);
+
+  const handleElementLayerLive = useCallback((id, layer) => {
+    updateElementsLive(
+      elementsRef.current.map(e => (e.id === id ? { ...e, layer } : e))
+    );
+    setElementLayerCount(c => Math.max(c, layer + 1));
+  }, [updateElementsLive]);
+
+  const handleCaptionTimeLiveWithRefresh = useCallback((id, range) => {
+    handleCaptionTimeLive(id, range);
+    refreshCanvas();
+  }, [handleCaptionTimeLive, refreshCanvas]);
+
+  const handleTrimCommit = useCallback(() => {
+    endTransaction();
+    dispatchChange(captionsRef.current, captionStylesRef.current, elementsRef.current);
+    refreshCanvas();
+  }, [dispatchChange, endTransaction, refreshCanvas]);
+
+  const handleAddElementLayer = useCallback(() => {
+    setElementLayerCount(c => Math.min(5, c + 1));
+  }, []);
+
+  const handleRemoveElementLayer = useCallback(() => {
+    setElementLayerCount(c => {
+      if (c <= 1) return c;
+      const removedIndex = c - 1;
+      const newCount = c - 1;
+      const remapped = remapElementsAfterRemoveTrack(elementsRef.current, removedIndex, newCount);
+      dispatchChange(captionsRef.current, captionStylesRef.current, remapped);
+      if (activeElementId) {
+        const still = remapped.find(e => e.id === activeElementId);
+        if (!still) setActiveElementId(null);
+      }
+      setTimeout(refreshCanvas, 0);
+      return newCount;
+    });
+  }, [activeElementId, dispatchChange, refreshCanvas]);
+
+  const handleCutAtPlayhead = useCallback(() => {
+    const t = videoRef.current?.currentTime ?? currentTimeRef.current;
+    const target = resolveCutTarget(
+      captionsRef.current,
+      elementsRef.current,
+      t,
+      activeId,
+      activeElementId
+    );
+    if (!target) return;
+
+    if (target.kind === 'element') {
+      const pair = splitElementAtTime(target.item, t);
+      if (!pair) return;
+      const next = replaceItemWithSplit(elementsRef.current, target.item.id, pair);
+      dispatchChange(captionsRef.current, captionStylesRef.current, next);
+      setActiveElementId(pair[1].id);
+      setActiveId(null);
+      setSelectedIds([]);
+    } else {
+      const pair = splitCaptionAtTime(target.item, t);
+      if (!pair) return;
+      const next = replaceItemWithSplit(captionsRef.current, target.item.id, pair);
+      dispatchChange(next, captionStylesRef.current, elementsRef.current);
+      setActiveId(pair[1].id);
+      setActiveElementId(null);
+      setSelectedIds([pair[1].id]);
+    }
+    setTimeout(refreshCanvas, 0);
+  }, [activeId, activeElementId, dispatchChange, refreshCanvas]);
+
+  const handleAddElement = useCallback((type) => {
+    const t = videoRef.current?.currentTime ?? currentTime;
+    const activeEl = elementsRef.current.find(e => e.id === activeElementId);
+    const el = createElement(type, t, duration, elementsRef.current, activeEl, elementLayerCount);
+    const neededTracks = (el.layer ?? 0) + 1;
+    if (neededTracks > elementLayerCount) setElementLayerCount(neededTracks);
+    const next = [...elementsRef.current, el];
+    dispatchChange(captionsRef.current, captionStylesRef.current, next);
+    setActiveElementId(el.id);
+    setActiveId(null);
+    setSelectedIds([]);
+    setActivePanel('elements');
+    setTimeout(refreshCanvas, 0);
+  }, [currentTime, duration, elementLayerCount, dispatchChange, refreshCanvas]);
+
+  const handleUpdateElement = useCallback((id, props) => {
+    const next = elementsRef.current.map(el => (el.id === id ? { ...el, ...props } : el));
+    dispatchChange(captionsRef.current, captionStylesRef.current, next);
+    setTimeout(refreshCanvas, 0);
+  }, [dispatchChange, refreshCanvas]);
+
+  const handleDeleteElement = useCallback((id) => {
+    const next = elementsRef.current.filter(el => el.id !== id);
+    dispatchChange(captionsRef.current, captionStylesRef.current, next);
+    if (activeElementId === id) setActiveElementId(null);
+    setTimeout(refreshCanvas, 0);
+  }, [activeElementId, dispatchChange, refreshCanvas]);
+
+  const handleElementSpeedLive = useCallback((speed) => {
+    if (!activeElementId) return;
+    updateElementsLive(elementsRef.current.map(el =>
+      el.id === activeElementId ? { ...el, animationDuration: speed } : el
+    ));
+    refreshCanvas();
+  }, [activeElementId, updateElementsLive, refreshCanvas]);
+
   const handleDeleteActive = useCallback(() => {
+    if (activeElementId) {
+      handleDeleteElement(activeElementId);
+      return;
+    }
     if (!activeId || captions.length <= 1) return;
     handleDeleteBlock(activeId);
-  }, [activeId, captions.length]);
+  }, [activeElementId, activeId, captions.length, handleDeleteElement]);
 
   const handleSeekBy = useCallback((delta) => {
     if (!videoRef.current || !duration) return;
@@ -370,6 +580,16 @@ export default function App() {
     dispatchChange(nextCaptions, updatedStyles);
   };
 
+  const applyLookPreset = useCallback((look) => {
+    const { styles, captions: nextCaptions } = buildStateFromLookPreset(look, captionsRef.current);
+    dispatchChange(nextCaptions, styles, elementsRef.current);
+    setTimeout(refreshCanvas, 0);
+    if (activeId) {
+      const cap = nextCaptions.find(c => c.id === activeId);
+      if (cap?.animation && cap.animation !== 'none') previewCaptionAnimation(cap);
+    }
+  }, [dispatchChange, refreshCanvas, activeId]);
+
   const handleExportVideo = async () => {
     if (!videoSrc || !videoRef.current) return;
     isExportingRef.current = true;
@@ -381,6 +601,7 @@ export default function App() {
         mainVideo: videoRef.current,
         captions,
         captionStyles,
+        elements,
         duration,
         isExportingRef,
         onProgress: setExportProgress,
@@ -414,9 +635,10 @@ export default function App() {
     mouseDownEvent.preventDefault();
     const startY = mouseDownEvent.clientY;
     const startHeight = timelineHeight;
+    const minH = timelineTracksHeight(elementLayerCount) + 40;
     const doDrag = (e) => {
       const newHeight = startHeight - (e.clientY - startY);
-      if (newHeight >= 50 && newHeight <= 220) setTimelineHeight(newHeight);
+      if (newHeight >= minH && newHeight <= 420) setTimelineHeight(newHeight);
     };
     const stopDrag = () => {
       window.removeEventListener('mousemove', doDrag);
@@ -438,6 +660,7 @@ export default function App() {
   };
 
   const currentActiveCaption = captions.find(c => c.id === activeId);
+  const currentActiveElement = elements.find(e => e.id === activeElementId);
 
   const shortcutHandlers = useMemo(() => ({
     onTogglePlay: () => videoSrc && handleTogglePlay(),
@@ -452,10 +675,12 @@ export default function App() {
     onAddCaption: handleAddBlock,
     onOpenPanel: setActivePanel,
     onEscape: () => setActivePanel('menu'),
-    onShowHelp: () => setHelpOpen(true)
+    onShowHelp: () => setHelpOpen(true),
+    onCut: handleCutAtPlayhead
   }), [
     videoSrc, undo, redo, handleDeleteActive, handleSeekBy,
-    handleZoomIn, handleZoomOut, handleResetView, handleAddBlock
+    handleZoomIn, handleZoomOut, handleResetView, handleAddBlock,
+    handleCutAtPlayhead
   ]);
 
   useKeyboardShortcuts(shortcutHandlers, true);
@@ -509,11 +734,16 @@ export default function App() {
                 handleResetView={handleResetView}
                 previewCanvasRef={previewCanvasRef}
                 captions={captions}
+                elements={elements}
                 captionStyles={captionStyles}
                 activeId={activeId}
+                activeElementId={activeElementId}
                 onSelectCaption={handleSelectCaption}
+                onSelectElement={handleSelectElement}
                 onTransformLive={handleTransformLive}
                 onTransformCommit={handleTransformCommit}
+                onElementTransformLive={handleElementTransformLive}
+                onElementTransformCommit={handleElementTransformCommit}
                 beginTransaction={beginTransaction}
                 endTransaction={endTransaction}
                 onUndo={undo}
@@ -523,28 +753,58 @@ export default function App() {
               />
             </div>
 
-            <div className="lg:col-span-1 bg-zinc-900/30 border border-zinc-800/60 rounded-2xl p-4 flex flex-col gap-4 h-full overflow-hidden">
+            <div className="lg:col-span-1 bg-zinc-900/30 border border-zinc-800/60 rounded-2xl p-3 flex flex-col min-h-0 h-full overflow-hidden">
               {activePanel === 'menu' ? (
                 <EditorToolsMenu onSelectPanel={setActivePanel} />
               ) : (
-                <div className="h-full flex flex-col animate-in slide-in-from-right-4 duration-300">
-                  <button onClick={() => setActivePanel('menu')} className="flex items-center text-xs text-zinc-500 hover:text-white mb-4 transition-colors">
+                <div className="h-full flex flex-col animate-in slide-in-from-right-4 duration-300 min-h-0">
+                  <button
+                    type="button"
+                    onClick={() => setActivePanel('menu')}
+                    className="flex items-center text-xs text-zinc-500 hover:text-white mb-3 transition-colors shrink-0"
+                  >
                     <ChevronLeft className="w-4 h-4" /> Back to Tools
                   </button>
-                  <div className="flex-1 overflow-y-auto custom-scrollbar pr-1">
-                    {activePanel === 'presets' && (
+                  <div className="flex-1 overflow-y-auto custom-scrollbar pr-1 min-h-0">
+                    {activePanel === 'caption-presets' && (
+                      <PresetCaptionPanel
+                        onApplyLookPreset={applyLookPreset}
+                        activeLookId={captionStyles.preset}
+                      />
+                    )}
+                    {activePanel === 'preset-font' && (
                       <div className="space-y-2">
                         {STYLE_PRESETS.map(p => (
-                          <button key={p.id} onClick={() => setThemePreset(p)} className="w-full p-3 bg-zinc-950 border border-zinc-800 rounded-lg text-xs text-left hover:border-indigo-500">
+                          <button
+                            key={p.id}
+                            type="button"
+                            onClick={() => setThemePreset(p)}
+                            className="w-full p-3 bg-zinc-950 border border-zinc-800 rounded-lg text-xs text-left hover:border-indigo-500"
+                          >
                             {p.name}
                           </button>
                         ))}
                       </div>
                     )}
-                    {activePanel === 'custom' && (
+                    {activePanel === 'custom-font' && (
                       <StyleEditorPanel captionStyles={captionStyles} onStyleChange={handleCustomStyleChange} />
                     )}
-                    {activePanel === 'animate' && (
+                    {activePanel === 'elements' && (
+                      <ElementsPanel
+                        activeElement={currentActiveElement}
+                        elementLayerCount={elementLayerCount}
+                        onAddElementLayer={handleAddElementLayer}
+                        onRemoveElementLayer={handleRemoveElementLayer}
+                        onAddElement={handleAddElement}
+                        onUpdateElement={handleUpdateElement}
+                        onDeleteElement={handleDeleteElement}
+                        onApplyAnimation={(id, animId) => handleUpdateElement(id, { animation: animId })}
+                        onSpeedChange={handleElementSpeedLive}
+                        onSpeedCommit={{ begin: beginTransaction, end: endTransaction }}
+                        onAnimateAllChange={(id, val) => handleUpdateElement(id, { animationAnimateAll: val })}
+                      />
+                    )}
+                    {activePanel === 'custom-animate' && (
                       <AnimatePanel
                         activeCaption={currentActiveCaption}
                         onApplyAnimation={(animId) => updateCaption(activeId, { animation: animId })}
@@ -565,12 +825,24 @@ export default function App() {
               <TimelineTrack
                 videoSrc={videoSrc}
                 captions={captions}
+                elements={elements}
                 currentTime={currentTime}
                 duration={duration}
                 activeId={activeId}
-                selectedIds={selectedIds}
+                activeElementId={activeElementId}
                 onSelectCaption={handleSelectCaption}
+                onSelectElement={handleSelectElement}
                 onSeek={handleTimelineSeek}
+                elementLayerCount={elementLayerCount}
+                onCaptionTimeLive={handleCaptionTimeLiveWithRefresh}
+                onElementTimeLive={handleElementTimeLive}
+                onElementLayerLive={handleElementLayerLive}
+                onTrimBegin={beginTransaction}
+                onTrimCommit={handleTrimCommit}
+                onMoveCommit={handleTrimCommit}
+                onAddElementLayer={handleAddElementLayer}
+                onRemoveElementLayer={handleRemoveElementLayer}
+                onCutAtPlayhead={handleCutAtPlayhead}
                 timelineHeight={timelineHeight}
               />
             </div>

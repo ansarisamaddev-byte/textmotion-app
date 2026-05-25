@@ -6,6 +6,7 @@ export async function exportVideo({
   mainVideo,
   captions,
   captionStyles,
+  elements = [],
   duration,
   isExportingRef,
   onProgress,
@@ -125,7 +126,7 @@ export async function exportVideo({
       }
     });
 
-    renderCaptionFrame(exportCtx, exportCanvas, mainVideo, captions, captionStyles);
+    renderCaptionFrame(exportCtx, exportCanvas, mainVideo, captions, captionStyles, elements);
 
     const frameInstance = new VideoFrame(exportCanvas, {
       timestamp: frameCount * (1000000 / fps),

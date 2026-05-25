@@ -37,13 +37,14 @@ export function useUndoRedo(getSnapshot, applyState) {
     }
   }, [getSnapshot, updateStackStatus]);
 
-  const commit = useCallback((nextCaptions, nextStyles) => {
+  const commit = useCallback((nextCaptions, nextStyles, nextElements) => {
     pushUndoSnapshot();
     const snap = getSnapshot();
     applyState({
       ...snap,
       captions: nextCaptions,
-      styles: nextStyles
+      styles: nextStyles,
+      elements: nextElements !== undefined ? nextElements : snap.elements
     });
   }, [getSnapshot, pushUndoSnapshot, applyState]);
 
