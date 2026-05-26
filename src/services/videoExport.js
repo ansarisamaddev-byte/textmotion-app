@@ -10,7 +10,8 @@ export async function exportVideo({
   duration,
   isExportingRef,
   onProgress,
-  onStatus
+  onStatus,
+  returnBlob = false
 }) {
   const nativeWidth = mainVideo.videoWidth || 1080;
   const nativeHeight = mainVideo.videoHeight || 1920;
@@ -81,36 +82,19 @@ export async function exportVideo({
   exportCanvas.height = nativeHeight;
   const exportCtx = exportCanvas.getContext('2d');
 
-  let frameCount = 0;
   const fps = 30;
+  const totalFrames = Math.ceil(duration * fps);
 
-  const renderNextFrame = async () => {
+  for (let frameCount = 0; frameCount < totalFrames; frameCount++) {
     if (!isExportingRef.current) {
       videoEncoder.close();
       audioEncoder.close();
       mainVideo.currentTime = originalTime;
-      return;
+      return returnBlob ? null : false;
     }
 
     const currentFrameTime = frameCount / fps;
-
-    if (currentFrameTime >= duration) {
-      onStatus('Compiling final video...');
-      await videoEncoder.flush();
-      await audioEncoder.flush();
-      muxer.finalize();
-
-      const blob = new Blob([muxer.target.buffer], { type: 'video/mp4' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `render-${Date.now()}.mp4`;
-      a.click();
-      URL.revokeObjectURL(url);
-
-      mainVideo.currentTime = originalTime;
-      return true;
-    }
+    if (currentFrameTime >= duration) break;
 
     mainVideo.currentTime = currentFrameTime;
 
@@ -137,10 +121,27 @@ export async function exportVideo({
     frameInstance.close();
 
     onProgress(Math.floor((currentFrameTime / duration) * 100));
-    frameCount++;
-    setTimeout(renderNextFrame, 5);
-  };
+    // Small yield so the UI can keep responding
+    await new Promise(r => setTimeout(r, 5));
+  }
 
-  await renderNextFrame();
-  return false;
+  if (!isExportingRef.current) return returnBlob ? null : false;
+
+  onStatus('Compiling final video...');
+  await videoEncoder.flush();
+  await audioEncoder.flush();
+  muxer.finalize();
+
+  const blob = new Blob([muxer.target.buffer], { type: 'video/mp4' });
+  if (!returnBlob) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `render-${Date.now()}.mp4`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  mainVideo.currentTime = originalTime;
+  return returnBlob ? blob : true;
 }

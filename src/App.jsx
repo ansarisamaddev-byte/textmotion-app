@@ -29,6 +29,8 @@ import { timelineTracksHeight } from './constants/timeline';
 import { useUndoRedo } from './hooks/useUndoRedo';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { exportVideo } from './services/videoExport';
+import ExportPayModal, { startRazorpayCheckout } from './components/ExportPayModal';
+import { uploadLockedExport, downloadLockedZip, createRazorpayOrder, pollExportStatus } from './services/exportPay';
 
 export { STYLE_PRESETS } from './constants/stylePresets';
 export { renderCaptionFrame } from './lib/captionRenderer';
@@ -43,6 +45,13 @@ export default function App() {
   const [selectedIds, setSelectedIds] = useState([]);
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
+  const [exportPayOpen, setExportPayOpen] = useState(false);
+  const [exportPayStep, setExportPayStep] = useState(0);
+  const [exportPayStatus, setExportPayStatus] = useState('');
+  const [exportPayId, setExportPayId] = useState(null);
+  const [zipDownloaded, setZipDownloaded] = useState(false);
+  const [exportPayEmail, setExportPayEmail] = useState('');
+  const [paymentState, setPaymentState] = useState('idle'); // idle | opening | waiting | done
   const [sidebarWidth, setSidebarWidth] = useState(180);
   const [isDraggingText, setIsDraggingText] = useState(false);
   const [zoomScale, setZoomScale] = useState(100);
@@ -199,13 +208,17 @@ export default function App() {
     if (isPlaying) {
       const block = captions.find(c => currentTime >= c.start && currentTime <= c.end);
       if (block) {
-        setActiveId(block.id);
-        setSelectedIds([block.id]);
+        setActiveId(prev => (prev === block.id ? prev : block.id));
+        setSelectedIds(prev => {
+          if (prev.length === 1 && prev[0] === block.id) return prev;
+          return [block.id];
+        });
       } else {
-        setActiveId(null);
+        setActiveId(prev => (prev === null ? prev : null));
       }
     } else if (selectedIds.length > 0) {
-      setActiveId(selectedIds[0]);
+      const next = selectedIds[0];
+      setActiveId(prev => (prev === next ? prev : next));
     }
   }, [currentTime, isPlaying, captions, videoSrc, selectedIds]);
 
@@ -592,11 +605,19 @@ export default function App() {
 
   const handleExportVideo = async () => {
     if (!videoSrc || !videoRef.current) return;
+    // Export & Pay flow
+    setIsPlaying(false);
+    setExportPayOpen(true);
+    setExportPayStep(1);
     isExportingRef.current = true;
     setIsExporting(true);
     setExportProgress(0);
+    setExportPayStatus('Rendering…');
+    setExportPayId(null);
+    setZipDownloaded(false);
+    setPaymentState('idle');
     try {
-      await exportVideo({
+      const blob = await exportVideo({
         videoSrc,
         mainVideo: videoRef.current,
         captions,
@@ -605,19 +626,77 @@ export default function App() {
         duration,
         isExportingRef,
         onProgress: setExportProgress,
-        onStatus: () => {}
+        onStatus: setExportPayStatus,
+        returnBlob: true
       });
+      if (!blob) {
+        throw new Error(`render_failed_emptyBlob isExportingRef=${String(isExportingRef.current)}`);
+      }
+      setExportPayStatus('Encrypting & preparing download…');
+      const uploaded = await uploadLockedExport(blob);
+      setExportPayId(uploaded.exportId);
+      downloadLockedZip(uploaded.downloadUrl, uploaded.exportId);
+      setZipDownloaded(true);
+      setExportPayStep(2);
+      setExportPayStatus('Locked ZIP downloaded. Enter email then pay to receive password.');
+    } catch (e) {
+      console.error(e);
+      const msg = e?.message ? String(e.message) : 'unknown_error';
+      if (msg.startsWith('render_failed')) {
+        setExportPayStatus(`Render aborted. ${msg}`);
+      } else {
+        setExportPayStatus(`Export failed: ${msg}`);
+      }
     } finally {
       isExportingRef.current = false;
       setIsExporting(false);
-      setExportProgress(0);
+      setTimeout(() => setExportProgress(0), 500);
     }
   };
+
+  const handleStartPayment = useCallback(async () => {
+    if (!exportPayId || !exportPayEmail) return;
+    try {
+      setPaymentState('opening');
+      const order = await createRazorpayOrder({ exportId: exportPayId, email: exportPayEmail, amountInr: 49 });
+      const result = await startRazorpayCheckout({
+        keyId: order.keyId,
+        orderId: order.orderId,
+        amount: order.amount,
+        currency: order.currency,
+        email: exportPayEmail
+      });
+      if (!result) {
+        setPaymentState('idle');
+        return;
+      }
+      setPaymentState('waiting');
+      setExportPayStatus('Payment received. Waiting for confirmation & email…');
+      // Poll status (webhook-driven email)
+      for (let i = 0; i < 30; i++) {
+        // eslint-disable-next-line no-await-in-loop
+        const st = await pollExportStatus(exportPayId);
+        if (st.emailed) {
+          setPaymentState('done');
+          setExportPayStatus('Done. Password sent to your email.');
+          return;
+        }
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise(r => setTimeout(r, 2000));
+      }
+      setExportPayStatus('Payment done. Password email may take a moment (webhook).');
+    } catch (e) {
+      console.error(e);
+      setPaymentState('idle');
+      setExportPayStatus('Payment failed to start. Check server + keys.');
+    }
+  }, [exportPayEmail, exportPayId]);
 
   const handleCancelExport = () => {
     isExportingRef.current = false;
     setIsExporting(false);
     setExportProgress(0);
+    setExportPayStatus('Cancelled.');
   };
 
   const handleTimeUpdate = () => {
@@ -693,6 +772,7 @@ export default function App() {
         isExporting={isExporting}
         exportProgress={exportProgress}
         hasVideo={!!videoSrc}
+        exportLabel="Export & Pay"
         helpOpen={helpOpen}
         onHelpOpenChange={setHelpOpen}
       />
@@ -850,7 +930,23 @@ export default function App() {
         </main>
       </div>
 
-      {isExporting && <ExportOverlay exportProgress={exportProgress} onCancel={handleCancelExport} />}
+      <ExportPayModal
+        open={exportPayOpen}
+        onClose={() => setExportPayOpen(false)}
+        disableClose={exportPayStep === 1}
+        exportProgress={exportProgress}
+        statusText={exportPayStatus}
+        step={exportPayStep}
+        exportId={exportPayId}
+        zipDownloaded={zipDownloaded}
+        email={exportPayEmail}
+        onEmailChange={setExportPayEmail}
+        onStartPayment={handleStartPayment}
+        paymentState={paymentState}
+        amountInr={49}
+      />
+
+      {isExporting && !exportPayOpen && exportPayStep === 0 && <ExportOverlay exportProgress={exportProgress} onCancel={handleCancelExport} />}
     </div>
   );
 }

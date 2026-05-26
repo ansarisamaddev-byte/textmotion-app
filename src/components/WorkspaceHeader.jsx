@@ -8,6 +8,7 @@ export default function WorkspaceHeader({
   isExporting,
   exportProgress,
   hasVideo,
+  exportLabel = 'Export Video',
   helpOpen = false,
   onHelpOpenChange
 }) {
@@ -52,7 +53,7 @@ export default function WorkspaceHeader({
               }`}
             >
               <Download className={`w-3.5 h-3.5 ${isExporting ? 'animate-pulse text-zinc-500' : 'text-indigo-200'}`} />
-              <span>{isExporting ? `Exporting (${exportProgress}%)` : 'Export Video'}</span>
+              <span>{isExporting ? `Exporting (${exportProgress}%)` : exportLabel}</span>
             </button>
           )}
         </div>
