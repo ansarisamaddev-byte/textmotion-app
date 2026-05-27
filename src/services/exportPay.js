@@ -45,13 +45,19 @@ export function downloadLockedZip(downloadUrl, exportId) {
   a.click();
 }
 
-export async function createRazorpayOrder({ exportId, email, amountInr }) {
-  const res = await fetch('http://localhost:5174/api/payments/order', {
+// In your frontend file
+export async function createRazorpayOrder({ exportId, amountInr }) {
+  const res = await fetch('http://localhost:5174/api/payments/order', { // Your backend, not Razorpay's API
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ exportId, email, amountInr })
+    body: JSON.stringify({
+      amountInr: amountInr,
+      exportId: exportId
+    })
   });
-  if (!res.ok) throw new Error('order_failed');
+  
+  console.log(res);
+  if (!res.ok) throw new Error('Order creation failed');
   return await res.json();
 }
 
@@ -60,4 +66,3 @@ export async function pollExportStatus(exportId) {
   if (!res.ok) throw new Error('status_failed');
   return await res.json();
 }
-

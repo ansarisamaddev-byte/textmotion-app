@@ -6,7 +6,6 @@ import fs from 'fs';
 import dotenv from 'dotenv';
 import multer from 'multer';
 import Razorpay from 'razorpay';
-import nodemailer from 'nodemailer';
 import archiver from 'archiver';
 import archiverZipEncrypted from 'archiver-zip-encrypted';
 
@@ -48,38 +47,6 @@ const writeMeta = (exportId, meta) => {
 const genId = () => crypto.randomBytes(12).toString('hex');
 const genPassword = () => crypto.randomBytes(9).toString('base64url'); // ~12 chars
 
-function getMailer() {
-  const host = process.env.SMTP_HOST;
-  const port = Number(process.env.SMTP_PORT || 587);
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
-  const from = process.env.FROM_EMAIL || user;
-  if (!host || !user || !pass || !from) return null;
-  const transporter = nodemailer.createTransport({
-    host,
-    port,
-    secure: port === 465,
-    auth: { user, pass }
-  });
-  return { transporter, from };
-}
-
-async function sendPasswordEmail(to, exportId, password) {
-  const mailer = getMailer();
-  if (!mailer) {
-    console.warn('[email] SMTP not configured; password not emailed.', { to, exportId });
-    return { sent: false, reason: 'smtp_not_configured' };
-  }
-  const { transporter, from } = mailer;
-  await transporter.sendMail({
-    from,
-    to,
-    subject: 'Your TextMotion export password',
-    text: `Your export is ready.\n\nExport ID: ${exportId}\nPassword: ${password}\n\nUse this password to unlock the ZIP you downloaded.\n`
-  });
-  return { sent: true };
-}
-
 // JSON endpoints (except webhook)
 app.use('/api', express.json({ limit: '5mb' }));
 
@@ -116,10 +83,8 @@ app.post('/api/exports', upload.single('video'), async (req, res) => {
       createdAt: Date.now(),
       zipPath,
       password,
-      email: null,
       orderId: null,
       paid: false,
-      emailed: false
     });
 
     res.json({
@@ -147,8 +112,7 @@ app.get('/api/exports/:id/status', (req, res) => {
   res.json({
     exportId: meta.exportId,
     paid: !!meta.paid,
-    emailed: !!meta.emailed,
-    email: meta.email
+    password: meta.paid ? meta.password : null
   });
 });
 
@@ -156,9 +120,9 @@ app.get('/api/exports/:id/status', (req, res) => {
 app.post('/api/payments/order', async (req, res) => {
   try {
     if (!razorpay) return res.status(500).json({ error: 'razorpay_not_configured' });
-
-    const { exportId, email, amountInr } = req.body || {};
-    if (!exportId || !email) return res.status(400).json({ error: 'missing_fields' });
+    
+    const { exportId, amountInr } = req.body || {};
+    if (!exportId) return res.status(400).json({ error: 'missing_fields' });
 
     const meta = readMeta(exportId);
     if (!meta) return res.status(404).json({ error: 'export_not_found' });
@@ -169,19 +133,17 @@ app.post('/api/payments/order', async (req, res) => {
       amount: amountPaise,
       currency: 'INR',
       receipt: `tm_${exportId}`,
-      notes: { exportId, email }
+      notes: { exportId }
     });
-
-    meta.email = email;
     meta.orderId = order.id;
     writeMeta(exportId, meta);
-
+    
     res.json({
       keyId: KEY_ID,
       orderId: order.id,
       amount: order.amount,
       currency: order.currency,
-      exportId
+      exportId: order.notes.exportId
     });
   } catch (e) {
     console.error(e);
@@ -193,16 +155,21 @@ app.post('/api/payments/order', async (req, res) => {
 app.post('/api/webhooks/razorpay', express.raw({ type: '*/*' }), async (req, res) => {
   try {
     if (!WEBHOOK_SECRET) return res.status(500).send('webhook_secret_missing');
+    let event;
+    if (Buffer.isBuffer(req.body)) {
+      event = JSON.parse(req.body.toString('utf8'));
+    } else {
+      event = req.body;
+    }
 
-    const sig = req.headers['x-razorpay-signature'];
-    const expected = crypto
-      .createHmac('sha256', WEBHOOK_SECRET)
-      .update(req.body)
-      .digest('hex');
-
-    if (sig !== expected) return res.status(400).send('invalid_signature');
-
-    const event = JSON.parse(req.body.toString('utf8'));
+    if (Buffer.isBuffer(req.body)) {
+      const sig = req.headers['x-razorpay-signature'];
+      const expected = crypto
+        .createHmac('sha256', WEBHOOK_SECRET)
+        .update(req.body)
+        .digest('hex');
+      if (sig !== expected) return res.status(400).send('invalid_signature');
+    }
     if (event?.event !== 'payment.captured') return res.status(200).send('ignored');
 
     const payment = event.payload?.payment?.entity;
@@ -221,20 +188,8 @@ app.post('/api/webhooks/razorpay', express.raw({ type: '*/*' }), async (req, res
     const meta = readMeta(exportId);
     if (!meta) return res.status(200).send('no_meta');
 
-    if (!meta.paid) {
-      meta.paid = true;
-      writeMeta(exportId, meta);
-    }
-
-    if (meta.email && !meta.emailed) {
-      try {
-        const result = await sendPasswordEmail(meta.email, exportId, meta.password);
-        meta.emailed = !!result.sent;
-        writeMeta(exportId, meta);
-      } catch (e) {
-        console.error('[email] send failed', e);
-      }
-    }
+    meta.paid = true;
+    writeMeta(exportId, meta);
 
     res.status(200).send('ok');
   } catch (e) {
@@ -248,3 +203,40 @@ app.listen(PORT, () => {
   console.log(`[server] listening on http://localhost:${PORT}`);
 });
 
+
+
+// ==========================================
+// AUTOMATED STORAGE CLEANUP (GARBAGE COLLECTOR)
+// ==========================================
+
+function cleanExpiredExports() {
+  try {
+    const NOW = Date.now();
+    const ONE_HOUR_MS = 60 * 60 * 1000; // 1 Hour lifespan
+
+    // Read all files inside the exports directory
+    const files = fs.readdirSync(EXPORT_DIR);
+    let deletedCount = 0;
+
+    files.forEach((file) => {
+      const filePath = path.resolve(EXPORT_DIR, file);
+      const stats = fs.statSync(filePath);
+      const fileAgeMs = NOW - stats.mtimeMs;
+
+      // If the file is older than 1 hour, wipe it completely
+      if (fileAgeMs > ONE_HOUR_MS) {
+        fs.unlinkSync(filePath);
+        deletedCount++;
+      }
+    });
+
+    if (deletedCount > 0) {
+      console.log(`[GC CLEANUP] Successfully removed ${deletedCount} expired export files from storage.`);
+    }
+  } catch (err) {
+    console.error('[GC CLEANUP] Error during automated file purging:', err);
+  }
+}
+
+// Automatically execute the cleaner every 10 minutes
+setInterval(cleanExpiredExports, 10 * 1000 * 60);

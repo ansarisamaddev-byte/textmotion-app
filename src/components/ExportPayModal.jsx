@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { X, Lock, CreditCard, Download, Mail } from 'lucide-react';
+import { X, Lock, CreditCard, Download, Clipboard, Check } from 'lucide-react';
 import { uploadLockedExport, downloadLockedZip, createRazorpayOrder, pollExportStatus } from '../services/exportPay';
 
 function ensureRazorpayScript() {
@@ -31,16 +31,25 @@ export default function ExportPayModal({
   exportId,
   zipDownloaded,
   onStartPayment,
-  onEmailChange,
-  email,
   paymentState,
-  amountInr = 49
+  amountInr = 49,
+  exportPassword // Pass the password here once the backend says paid: true
 }) {
   if (!open) return null;
 
+  const [copied, setCopied] = useState(false);
+
+  const copyToClipboard = () => {
+    if (exportPassword) {
+      navigator.clipboard.writeText(exportPassword);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
   const stepTitle = useMemo(() => {
     if (step === 1) return 'Step 1 — Render & download locked file';
-    if (step === 2) return 'Step 2 — Pay & receive password by email';
+    if (step === 2) return 'Step 2 — Pay to unlock';
     return 'Export & Pay';
   }, [step]);
 
@@ -84,7 +93,7 @@ export default function ExportPayModal({
                 Pay
               </div>
               <p className="text-[10px] text-zinc-500 mt-1">
-                After payment, we email the ZIP password to unlock the file.
+                After payment, your password will be revealed instantly on screen.
               </p>
             </div>
           </div>
@@ -104,52 +113,54 @@ export default function ExportPayModal({
             )}
           </div>
 
-          {step >= 2 && (
-            <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4 space-y-3">
-              <label className="block">
-                <span className="text-[10px] uppercase font-bold text-zinc-500 flex items-center gap-1.5">
-                  <Mail className="w-3.5 h-3.5 text-indigo-400" /> Email for password
-                </span>
-                <input
-                  value={email}
-                  onChange={(e) => onEmailChange(e.target.value)}
-                  type="email"
-                  placeholder="you@example.com"
-                  className="mt-2 w-full px-3 py-2 rounded-xl border border-zinc-800 bg-zinc-900 text-sm text-zinc-100 outline-none focus:border-indigo-500"
-                />
-              </label>
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] text-zinc-500">Amount</span>
-                <span className="text-[11px] font-mono font-bold text-zinc-200">₹{amountInr}</span>
+          {/* Dynamic Content Block: Displays Amount, or displays Password when successful */}
+          <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
+            {paymentState === 'success' ? (
+              <div className="space-y-2">
+                <span className="text-[10px] uppercase font-bold text-emerald-500 tracking-wider">Unlock Password</span>
+                <div className="flex items-center justify-between bg-zinc-900 p-3 rounded-xl border border-zinc-800">
+                  <span className="font-mono text-lg text-white tracking-widest selection:bg-indigo-500">{exportPassword}</span>
+                  <button type="button" onClick={copyToClipboard} className="text-zinc-400 hover:text-white p-1 rounded-lg transition" title="Copy to clipboard">
+                    {copied ? <Check className="w-5 h-5 text-emerald-400" /> : <Clipboard className="w-5 h-5" />}
+                  </button>
+                </div>
               </div>
-            </div>
-          )}
+            ) : (
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold text-zinc-500 uppercase">Amount</span>
+                <span className="text-sm font-mono font-bold text-zinc-200">₹{amountInr}</span>
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="px-5 py-4 border-t border-zinc-800 flex items-center justify-between gap-3">
           <div className="text-[10px] text-zinc-600 min-w-0">
             {step === 1 && <span>Don’t close this tab while rendering.</span>}
-            {step === 2 && <span>After payment, password is emailed automatically.</span>}
+            {step === 2 && paymentState !== 'success' && <span>Pay to unlock your password directly on screen.</span>}
+            {paymentState === 'success' && <span className="text-emerald-500 font-medium">Payment completed successfully!</span>}
           </div>
 
-          <button
-            type="button"
-            disabled={step !== 2 || !zipDownloaded || !email || paymentState === 'opening' || paymentState === 'waiting'}
-            onClick={onStartPayment}
-            className="shrink-0 flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-400 text-zinc-950 disabled:opacity-40 disabled:pointer-events-none transition"
-            title={zipDownloaded ? 'Pay with Razorpay' : 'Download locked zip first'}
-          >
-            <Download className="w-4 h-4" />
-            <span>{paymentState === 'waiting' ? 'Waiting…' : 'Pay & Email Password'}</span>
-          </button>
+          {paymentState !== 'success' && (
+            <button
+              type="button"
+              disabled={step !== 2 || !zipDownloaded || paymentState === 'opening' || paymentState === 'waiting'}
+              onClick={onStartPayment}
+              className="shrink-0 flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-400 text-zinc-950 disabled:opacity-40 disabled:pointer-events-none transition"
+              title={zipDownloaded ? 'Pay with Razorpay' : 'Download locked zip first'}
+            >
+              <CreditCard className="w-4 h-4" />
+              <span>{paymentState === 'waiting' ? 'Waiting…' : `Pay ₹${amountInr}`}</span>
+            </button>
+          )}
         </div>
       </div>
     </div>
   );
 }
 
-// Helper used by App.jsx (kept here to avoid duplicating script logic)
-export async function startRazorpayCheckout({ keyId, orderId, amount, currency, email, onSuccess }) {
+// Helper used by App.jsx (kept perfectly intact)
+export async function startRazorpayCheckout({ keyId, orderId, amount, currency, onSuccess }) {
   await ensureRazorpayScript();
   return new Promise((resolve, reject) => {
     // eslint-disable-next-line no-undef
@@ -160,7 +171,6 @@ export async function startRazorpayCheckout({ keyId, orderId, amount, currency, 
       name: 'TextMotion Pro',
       description: 'Unlock exported video',
       order_id: orderId,
-      prefill: { email },
       theme: { color: '#f59e0b' },
       handler: function (response) {
         onSuccess?.(response);
@@ -177,4 +187,3 @@ export async function startRazorpayCheckout({ keyId, orderId, amount, currency, 
     }
   });
 }
-

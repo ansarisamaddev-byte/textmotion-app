@@ -50,7 +50,7 @@ export default function App() {
   const [exportPayStatus, setExportPayStatus] = useState('');
   const [exportPayId, setExportPayId] = useState(null);
   const [zipDownloaded, setZipDownloaded] = useState(false);
-  const [exportPayEmail, setExportPayEmail] = useState('');
+  const [exportPassword, setExportPassword] = useState('');
   const [paymentState, setPaymentState] = useState('idle'); // idle | opening | waiting | done
   const [sidebarWidth, setSidebarWidth] = useState(180);
   const [isDraggingText, setIsDraggingText] = useState(false);
@@ -614,6 +614,7 @@ export default function App() {
     setExportProgress(0);
     setExportPayStatus('Rendering…');
     setExportPayId(null);
+    setExportPassword(null); // Clear previous password if any
     setZipDownloaded(false);
     setPaymentState('idle');
     try {
@@ -638,7 +639,7 @@ export default function App() {
       downloadLockedZip(uploaded.downloadUrl, uploaded.exportId);
       setZipDownloaded(true);
       setExportPayStep(2);
-      setExportPayStatus('Locked ZIP downloaded. Enter email then pay to receive password.');
+      setExportPayStatus('Locked ZIP downloaded. Ready for payment.');
     } catch (e) {
       console.error(e);
       const msg = e?.message ? String(e.message) : 'unknown_error';
@@ -655,42 +656,43 @@ export default function App() {
   };
 
   const handleStartPayment = useCallback(async () => {
-    if (!exportPayId || !exportPayEmail) return;
+    if (!exportPayId) return;
     try {
       setPaymentState('opening');
-      const order = await createRazorpayOrder({ exportId: exportPayId, email: exportPayEmail, amountInr: 49 });
+      const order = await createRazorpayOrder({ exportId: exportPayId, amountInr: 49 });
       const result = await startRazorpayCheckout({
         keyId: order.keyId,
         orderId: order.orderId,
         amount: order.amount,
         currency: order.currency,
-        email: exportPayEmail
       });
       if (!result) {
         setPaymentState('idle');
         return;
       }
       setPaymentState('waiting');
-      setExportPayStatus('Payment received. Waiting for confirmation & email…');
-      // Poll status (webhook-driven email)
+      setExportPayStatus('Payment received. Unlocking password…');
+      
+      // Poll status for payment verification and password acquisition
       for (let i = 0; i < 30; i++) {
         // eslint-disable-next-line no-await-in-loop
         const st = await pollExportStatus(exportPayId);
-        if (st.emailed) {
-          setPaymentState('done');
-          setExportPayStatus('Done. Password sent to your email.');
+        if (st.paid && st.password) {
+          setExportPassword(st.password); // Update the state with the received password
+          setPaymentState('success'); // Change state to success to trigger the modal UI updates
+          setExportPayStatus('Done. Your password is ready.');
           return;
         }
         // eslint-disable-next-line no-await-in-loop
         await new Promise(r => setTimeout(r, 2000));
       }
-      setExportPayStatus('Payment done. Password email may take a moment (webhook).');
+      setExportPayStatus('Payment done. Password activation may take a moment.');
     } catch (e) {
       console.error(e);
       setPaymentState('idle');
       setExportPayStatus('Payment failed to start. Check server + keys.');
     }
-  }, [exportPayEmail, exportPayId]);
+  }, [exportPayId]);
 
   const handleCancelExport = () => {
     isExportingRef.current = false;
@@ -931,20 +933,19 @@ export default function App() {
       </div>
 
       <ExportPayModal
-        open={exportPayOpen}
-        onClose={() => setExportPayOpen(false)}
-        disableClose={exportPayStep === 1}
-        exportProgress={exportProgress}
-        statusText={exportPayStatus}
-        step={exportPayStep}
-        exportId={exportPayId}
-        zipDownloaded={zipDownloaded}
-        email={exportPayEmail}
-        onEmailChange={setExportPayEmail}
-        onStartPayment={handleStartPayment}
-        paymentState={paymentState}
-        amountInr={49}
-      />
+  open={exportPayOpen}
+  onClose={() => setExportPayOpen(false)}
+  disableClose={exportPayStep === 1}
+  exportProgress={exportProgress}
+  statusText={exportPayStatus}
+  step={exportPayStep}
+  exportId={exportPayId}
+  zipDownloaded={zipDownloaded}
+  onStartPayment={handleStartPayment}
+  paymentState={paymentState}
+  amountInr={49}
+  exportPassword={exportPassword} // <-- Added to pass down the revealed password
+/>
 
       {isExporting && !exportPayOpen && exportPayStep === 0 && <ExportOverlay exportProgress={exportProgress} onCancel={handleCancelExport} />}
     </div>
