@@ -1,7 +1,6 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 
 const HANDLES = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
-
 const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
 
 const handlePos = {
@@ -42,6 +41,8 @@ export default function CaptionSelectionOverlay({
     }
     const b = activeCaption._metaBoundingBox;
     const pad = 2;
+    
+    // Simple, clean percentage positioning based on internal video coordinate scales
     setBox({
       leftPct: ((b.left - pad) / canvas.width) * 100,
       topPct: ((b.topY - pad) / canvas.height) * 100,
@@ -62,32 +63,73 @@ export default function CaptionSelectionOverlay({
       yRel: clamp(drag.initialYRel + deltaY, 0.1, 0.98)
     });
   }, [activeId, canvasRef, onTransformLive]);
-
   const applyResize = useCallback((clientX, clientY, handle) => {
     const canvas = canvasRef.current;
     if (!canvas || !dragRef.current) return;
     const rect = canvas.getBoundingClientRect();
-    const pointerY = ((clientY - rect.top) / rect.height) * canvas.height;
+    
+    // Convert current mouse pixel coordinates back to internal canvas coordinates
     const pointerX = ((clientX - rect.left) / rect.width) * canvas.width;
+    const pointerY = ((clientY - rect.top) / rect.height) * canvas.height;
+    
     const b = dragRef.current.initialBox;
+    const initialWidth = dragRef.current.initialBox.width || Math.max(b.right - b.left, 1);
+    const initialHeight = dragRef.current.initialBox.height || Math.max(b.bottomY - b.topY, 1);
 
-    let scale = 1;
-    if (handle.includes('s')) scale = (pointerY - b.topY) / Math.max(b.height, 1);
-    else if (handle.includes('n')) scale = (b.bottomY - pointerY) / Math.max(b.height, 1);
-    else if (handle.includes('e')) scale = (pointerX - b.left) / Math.max(b.width, 1);
-    else if (handle.includes('w')) scale = (b.right - pointerX) / Math.max(b.width, 1);
-
+    // --- CASE 1: CORNER HANDLES (Scale Font Size Proportionally) ---
     if (handle.length === 2) {
-      const sy = handle.includes('s') ? (pointerY - b.topY) : (b.bottomY - pointerY);
-      const sx = handle.includes('e') ? (pointerX - b.left) : (b.right - pointerX);
-      scale = (sy / Math.max(b.height, 1) + sx / Math.max(b.width, 1)) / 2;
+      let scale = 1;
+      
+      // Calculate how much the user has dragged away from the opposite corner anchor
+      if (handle.includes('s')) scale = (pointerY - b.topY) / initialHeight;
+      else if (handle.includes('n')) scale = (b.bottomY - pointerY) / initialHeight;
+      else if (handle.includes('e')) scale = (pointerX - b.left) / initialWidth;
+      else if (handle.includes('w')) scale = (b.right - pointerX) / initialWidth;
+
+      // Average out X and Y drag scales for a smooth uniform scale
+      if (handle.includes('s') || handle.includes('n')) {
+        const scaleX = handle.includes('e') ? (pointerX - b.left) / initialWidth : (b.right - pointerX) / initialWidth;
+        scale = (scale + scaleX) / 2;
+      }
+
+      scale = clamp(scale, 0.35, 3.5);
+      const newSize = Math.round(clamp(dragRef.current.initialFontSize * scale, 14, 160));
+      
+      // Corner scales the font size up/down uniformly
+      onTransformLive(activeId, { fontSize: `${newSize}px` });
+    } 
+    
+    // --- CASE 2: SIDE HANDLES (Adjust Width Only -> Word Wrap) ---
+    else if (handle === 'e' || handle === 'w') {
+      let newWidth = initialWidth;
+
+      if (handle === 'e') {
+        // Dragging East: expand relative to center alignment matrix
+        newWidth = (pointerX - b.centerX) * 2;
+      } else if (handle === 'w') {
+        // Dragging West: expand relative to center alignment matrix
+        newWidth = (b.centerX - pointerX) * 2;
+      }
+
+      // Constrain boundary width size safely
+      newWidth = clamp(newWidth, 100, canvas.width * 0.95);
+
+      onTransformLive(activeId, { boxWidth: newWidth });
     }
+    
+    // --- CASE 3: TOP/BOTTOM HANDLES (Adjust Font Size Vertically) ---
+    else if (handle === 'n' || handle === 's') {
+      let scaleY = 1;
+      if (handle === 's') scaleY = (pointerY - b.topY) / initialHeight;
+      else if (handle === 'n') scaleY = (b.bottomY - pointerY) / initialHeight;
 
-    scale = clamp(scale, 0.35, 3.5);
-    const newSize = Math.round(clamp(dragRef.current.initialFontSize * scale, 14, 160));
-    onTransformLive(activeId, { fontSize: `${newSize}px` });
+      scaleY = clamp(scaleY, 0.35, 3.5);
+      const newSize = Math.round(clamp(dragRef.current.initialFontSize * scaleY, 14, 160));
+
+      onTransformLive(activeId, { fontSize: `${newSize}px` });
+    }
   }, [activeId, canvasRef, onTransformLive]);
-
+  
   const onPointerDown = (e, mode, handle = null) => {
     e.preventDefault();
     e.stopPropagation();
@@ -146,7 +188,7 @@ export default function CaptionSelectionOverlay({
         {HANDLES.map(h => (
           <div
             key={h}
-            className={`absolute w-3 h-3 rounded-full bg-white border-2 border-indigo-500 shadow-md hover:scale-110 transition-transform ${handlePos[h]}`}
+            className={`absolute w-1 h-1 rounded-full bg-white border-1 border-indigo-500 shadow-md hover:scale-110 transition-transform ${handlePos[h]}`}
             onPointerDown={(e) => onPointerDown(e, 'resize', h)}
           />
         ))}

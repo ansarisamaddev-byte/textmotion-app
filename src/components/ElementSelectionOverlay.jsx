@@ -181,7 +181,7 @@ export default function ElementSelectionOverlay({
         ))}
         {useCornerOnly && (
           <div
-            className="absolute bottom-0 right-0 translate-x-1/2 translate-y-1/2 w-3 h-3 rounded-full bg-white border-2 border-amber-400 cursor-nwse-resize"
+            className="absolute bottom-0 right-0 translate-x-1/2 translate-y-1/2 w-1 h-1 rounded-full bg-white border-1 border-amber-400 cursor-nwse-resize"
             onPointerDown={(e) => onPointerDown(e, 'resize', 'se')}
           />
         )}

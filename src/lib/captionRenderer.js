@@ -57,6 +57,7 @@ const layoutCaptionWords = (ctx, text, anchorX, bottomY, maxWidth, baseSize, tex
     line.forEach((token) => {
       placements.push({
         text: token.text,
+        // Keep the calculated alignment positions centered relative to their allocated row chunk
         x: x + token.width / 2,
         y,
         width: token.width,
@@ -99,7 +100,7 @@ export const renderCaptionFrame = (ctx, canvas, video, captions, captionStyles, 
     const animateAll = activeCap.animationAnimateAll !== false;
     const elapsed = currentTime - activeCap.start;
 
-    // 3. APPLY STYLES
+    // APPLY STYLES
     const fontFamily = activeCap.fontFamily || captionStyles.fontFamily || 'Impact';
     const fontSize = activeCap.fontSize || captionStyles.fontSize || '48px';
     const fontWeight = activeCap.fontWeight || captionStyles.fontWeight || '900';
@@ -142,7 +143,10 @@ export const renderCaptionFrame = (ctx, canvas, video, captions, captionStyles, 
     }
 
     const rawText = textTransform === 'uppercase' ? baseText.toUpperCase() : baseText;
-    const maxTextWidth = canvas.width * 0.88;
+    
+    // FIX: Read custom box width if modified by side drag. Fall back to default 88% canvas width
+    const maxTextWidth = activeCap.boxWidth !== undefined ? activeCap.boxWidth : canvas.width * 0.88;
+    
     const currentXPercent = activeCap.xRel !== undefined ? activeCap.xRel : 0.5;
     const currentYPercent = activeCap.yRel !== undefined ? activeCap.yRel : 0.82;
     const xPos = canvas.width * currentXPercent;
@@ -157,30 +161,21 @@ export const renderCaptionFrame = (ctx, canvas, video, captions, captionStyles, 
     const padX = 4 + strokePad + shadowPad;
     const padY = 4 + strokePad + shadowPad * 0.5;
 
-    let blockLeft = Infinity;
-    let blockRight = -Infinity;
-    wordPlacements.forEach(w => {
-      blockLeft = Math.min(blockLeft, w.x - w.width / 2);
-      blockRight = Math.max(blockRight, w.x + w.width / 2);
-    });
-
-    if (!Number.isFinite(blockLeft)) {
-      blockLeft = xPos - 40;
-      blockRight = xPos + 40;
-    }
+    // FIX: Instead of auto-collapsing left and right metadata to the text edges,
+    // lock the boundary handles exactly to your drag allocation width to stop jitter.
+    const tightLeft = xPos - maxTextWidth / 2 - padX;
+    const tightRight = xPos + maxTextWidth / 2 + padX;
 
     const lineCount = wordPlacements.length
       ? Math.max(...wordPlacements.map(w => w.lineIndex)) + 1
       : 1;
     const totalBlockHeight = lineCount * baseSize * 1.2;
     const tightTop = bottomY - totalBlockHeight;
-    const tightLeft = blockLeft - padX;
-    const tightRight = blockRight + padX;
     const tightTopY = tightTop - padY;
     const tightBottomY = bottomY + padY * 0.35;
 
     activeCap._metaBoundingBox = {
-      centerX: (tightLeft + tightRight) / 2,
+      centerX: xPos,
       bottomY: tightBottomY,
       topY: tightTopY,
       left: tightLeft,

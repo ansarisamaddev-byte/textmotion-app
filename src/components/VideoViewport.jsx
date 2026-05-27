@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { Play, Pause, Maximize2, Volume2, ZoomIn, ZoomOut, Move, Undo2, Redo2 } from 'lucide-react';
+import { Play, Pause, Maximize2, Volume2, VolumeX, ZoomIn, ZoomOut, Move, Undo2, Redo2 } from 'lucide-react';
 import { renderCaptionFrame } from '../lib/captionRenderer';
 import CaptionSelectionOverlay from './CaptionSelectionOverlay';
 import ElementSelectionOverlay from './ElementSelectionOverlay';
@@ -42,17 +42,31 @@ export default function VideoViewport({
 }) {
   const isViewportDraggingRef = useRef(false);
   const viewportDragStart = useRef({ x: 0, y: 0 });
+  const viewportContainerRef = useRef(null); // Reference to track full viewport context element for maximizing
   const [renderTick, setRenderTick] = useState(0);
   const [videoAspect, setVideoAspect] = useState('9 / 16');
 
+  // Local state variables for Audio Control Deck Mechanics
+  const [volume, setVolume] = useState(1); // Ranges 0 to 1
+  const [isMuted, setIsMuted] = useState(false);
+
   const captionsRef = useRef(captions);
   const elementsRef = useRef(elements);
+  
   useEffect(() => {
     captionsRef.current = captions;
   }, [captions]);
   useEffect(() => {
     elementsRef.current = elements;
   }, [elements]);
+
+  // Sync internal real-time video element audio parameter states
+  useEffect(() => {
+    const video = videoRef?.current;
+    if (!video) return;
+    video.volume = volume;
+    video.muted = isMuted;
+  }, [volume, isMuted, videoRef, videoSrc]);
 
   useEffect(() => {
     const video = videoRef?.current;
@@ -84,22 +98,35 @@ export default function VideoViewport({
     videoRef.current.currentTime = newTime;
   };
 
-  // ✅ FIXED COORDINATE MAPPING METHOD
+  // Toggle Mute Loop Callback
+  const handleToggleMute = () => {
+    setIsMuted(prev => !prev);
+  };
+
+  // Screen View Maximizer Event Handler
+  const handleToggleFullscreen = () => {
+    const targetNode = viewportContainerRef.current;
+    if (!targetNode) return;
+
+    if (!document.fullscreenElement) {
+      targetNode.requestFullscreen?.().catch((err) => {
+        console.error(`Error attempting to enable fullscreen layout bounds: ${err.message}`);
+      });
+    } else {
+      document.exitFullscreen?.();
+    }
+  };
+
   const getCanvasRelativeCoords = (clientX, clientY, canvasElement, containerElement) => {
     const canvasRect = canvasElement.getBoundingClientRect();
-    const containerRect = containerElement.getBoundingClientRect();
-    
     const currentScaleMultiplier = zoomScale / 100;
 
-    // 1. Calculate where the canvas top-left corner sits natively inside its unscaled parent frame
     const canvasVisualWidthUnscaled = canvasRect.width / currentScaleMultiplier;
     const canvasVisualHeightUnscaled = canvasRect.height / currentScaleMultiplier;
 
-    // 2. Track screen client click offsets relative to the parent bounding frame
     const rawVisualX = clientX - canvasRect.left;
     const rawVisualY = clientY - canvasRect.top;
 
-    // 3. Reverse project translation vectors and scaling factors
     const canvasX = (rawVisualX / canvasRect.width) * canvasElement.width;
     const canvasY = (rawVisualY / canvasRect.height) * canvasElement.height;
 
@@ -179,7 +206,6 @@ export default function VideoViewport({
     isViewportDraggingRef.current = false;
   };
 
-  // Canvas Synchronization Pipeline
   useEffect(() => {
     const video = videoRef.current;
     const canvas = previewCanvasRef.current;
@@ -234,8 +260,10 @@ export default function VideoViewport({
   };
 
   return (
-    <div className="relative flex-1 bg-zinc-900/40 border border-zinc-800/60 rounded-2xl overflow-hidden flex flex-col justify-between p-3 h-full min-h-0 select-none backdrop-blur-sm">
-
+    <div 
+      ref={viewportContainerRef}
+      className="relative flex-1 bg-zinc-900/40 border border-zinc-800/60 overflow-hidden flex flex-col justify-between p-3 h-full min-h-0 select-none backdrop-blur-sm fullscreen:p-6 fullscreen:bg-zinc-950"
+    >
       <div
         onMouseDown={handleCanvasMouseDown}
         className={`relative flex-1 flex items-center justify-center min-h-0 w-full rounded-xl bg-zinc-950 border border-zinc-900/60 group shadow-inner pointer-events-auto ${
@@ -287,17 +315,11 @@ export default function VideoViewport({
             transformOrigin: 'center center',
             display: videoSrc ? 'flex' : 'none'
           }}
-          className="relative flex items-center justify-center min-h-full min-w-full p-6 transition-transform duration-75 ease-out shrink-0"
+          className="absolute inset-4 flex items-center justify-center transition-transform duration-75 ease-out shrink-0"
         >
           <div
-            className="relative pointer-events-auto shadow-2xl ring-1 ring-zinc-800/80"
-            style={{
-              aspectRatio: videoAspect,
-              height: zoomScale > 100 ? '70vh' : '100%',
-              maxHeight: '100%',
-              width: 'auto',
-              maxWidth: '100%'
-            }}
+            className="relative pointer-events-auto shadow-2xl ring-1 ring-zinc-800/80 aspect-[9/16] max-h-full max-w-full"
+            style={{ aspectRatio: videoAspect }}
           >
             <canvas ref={previewCanvasRef} className="block w-full h-full bg-black rounded-sm" />
 
@@ -341,7 +363,6 @@ export default function VideoViewport({
         )}
       </div>
 
-      {/* Transport Control Deck Area */}
       <div className="flex flex-col gap-2.5 mt-3 pt-2 border-t border-zinc-900 shrink-0">
         <div 
           onClick={handleProgressBarClick}
@@ -418,17 +439,61 @@ export default function VideoViewport({
             </span>
           </div>
 
-          <div className="flex items-center gap-0.5">
-            <button className="p-1 rounded-lg text-zinc-500 hover:text-zinc-300 transition" disabled={!videoSrc}>
-              <Volume2 className="w-3.5 h-3.5" />
-            </button>
-            <button className="p-1 rounded-lg text-zinc-500 hover:text-zinc-300 transition" disabled={!videoSrc}>
+          {/* AUDIO MUTE & FULLSCREEN ACTIONS ADDED HERE */}
+          <div className="flex items-center gap-1">
+           
+           {/* AUDIO MUTE & SLIDER CONTROL DECK */}
+<div className="flex items-center gap-1.5 group/vol bg-zinc-950/40 hover:bg-zinc-950 border border-transparent hover:border-zinc-900 px-1.5 py-1 rounded-lg transition-all duration-150">
+  <button 
+    type="button"
+    onClick={handleToggleMute} 
+    className="p-0.5 text-zinc-500 hover:text-zinc-300 transition shrink-0" 
+    disabled={!videoSrc}
+  >
+    {isMuted || volume === 0 ? (
+      <VolumeX className="w-3.5 h-3.5 text-rose-400" />
+    ) : (
+      <Volume2 className="w-3.5 h-3.5" />
+    )}
+  </button>
+  
+  {/* The slider strip expands and completely hides/reveals its knob handle on group hover */}
+  <input
+    type="range"
+    min="0"
+    max="1"
+    step="0.05"
+    disabled={!videoSrc}
+    value={isMuted ? 0 : volume}
+    onChange={(e) => {
+      const val = Number(e.target.value);
+      setVolume(val);
+      if (val > 0 && isMuted) setIsMuted(false);
+    }}
+    className="h-1 bg-zinc-800 appearance-none rounded-full cursor-pointer accent-indigo-500 transition-all duration-200 focus:outline-none
+      w-0 opacity-0 scale-x-0 origin-left
+      group-hover/vol:w-12 group-hover/vol:opacity-100 group-hover/vol:scale-x-100 group-hover/vol:mx-1
+      [&::-webkit-slider-thumb]:appearance-none 
+      [&::-webkit-slider-thumb]:w-0 [&::-webkit-slider-thumb]:h-0 
+      group-hover/vol:[&::-webkit-slider-thumb]:w-2.5 group-hover/vol:[&::-webkit-slider-thumb]:h-2.5 
+      group-hover/vol:[&::-webkit-slider-thumb]:bg-white group-hover/vol:[&::-webkit-slider-thumb]:rounded-full"
+  />
+</div>
+
+            <button 
+              type="button"
+              onClick={handleToggleFullscreen}
+              className="p-2 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-950 border border-transparent hover:border-zinc-900 rounded-lg transition" 
+              disabled={!videoSrc}
+              title="Toggle Large Workspace Preview"
+            >
               <Maximize2 className="w-3.5 h-3.5" />
             </button>
           </div>
+
+          
         </div>
       </div>
-
     </div>
   );
 }
