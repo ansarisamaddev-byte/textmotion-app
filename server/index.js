@@ -19,21 +19,6 @@ archiver.registerFormat('zip-encrypted', archiverZipEncrypted);
 const app = express();
 app.use(cors());
 
-// Serve static assets from the Vite build directory (SPA Fallback)
-const DIST_DIR = path.resolve(process.cwd(), 'dist');
-if (fs.existsSync(DIST_DIR)) {
-  app.use(express.static(DIST_DIR));
-}
-
-// Razorpay Instance Setup
-const KEY_ID = process.env.KEY_ID;
-const KEY_SECRET = process.env.KEY_SECRET;
-const WEBHOOK_SECRET = process.env.RAZORPAY_WEBHOOK_SECRET || '';
-
-const razorpay = KEY_ID && KEY_SECRET
-  ? new Razorpay({ key_id: KEY_ID, key_secret: KEY_SECRET })
-  : null;
-
 // Storage Infrastructure (Render Persistent Disk vs Local Fallback)
 const STORAGE_DIR = process.env.RENDER_DISK_MOUNT_PATH 
   ? path.resolve(process.env.RENDER_DISK_MOUNT_PATH, 'storage')
@@ -62,9 +47,25 @@ const genPassword = () => crypto.randomBytes(9).toString('base64url'); // ~12 ch
 // JSON parsing configuration for typical client traffic
 app.use('/api', express.json({ limit: '5mb' }));
 
+// Active UI client connections tracker mapping exportId -> res
+let uiClients = {};
+
+// Razorpay Instance Setup
+const KEY_ID = process.env.KEY_ID;
+const KEY_SECRET = process.env.KEY_SECRET;
+const WEBHOOK_SECRET = process.env.RAZORPAY_WEBHOOK_SECRET || '';
+
+const razorpay = KEY_ID && KEY_SECRET
+  ? new Razorpay({ key_id: KEY_ID, key_secret: KEY_SECRET })
+  : null;
+
 app.get('/ping', (req, res) => {
   res.send('ok');
 });
+
+// ==========================================
+// CORE PROJECT API ENDPOINTS
+// ==========================================
 
 // Create encrypted zip and return exportId + download URL
 app.post('/api/exports', upload.single('video'), async (req, res) => {
@@ -167,7 +168,7 @@ app.post('/api/payments/order', async (req, res) => {
   }
 });
 
-// Webhook must use raw body
+// Razorpay Webhook
 app.post('/api/webhooks/razorpay', express.raw({ type: '*/*' }), async (req, res) => {
   try {
     if (!WEBHOOK_SECRET) return res.status(500).send('webhook_secret_missing');
@@ -192,7 +193,6 @@ app.post('/api/webhooks/razorpay', express.raw({ type: '*/*' }), async (req, res
     const orderId = payment?.order_id;
     if (!orderId) return res.status(200).send('no_order');
 
-    // Find export by orderId
     const files = fs.readdirSync(EXPORT_DIR).filter(f => f.endsWith('.json'));
     const match = files.find((f) => {
       const meta = JSON.parse(fs.readFileSync(path.resolve(EXPORT_DIR, f), 'utf8'));
@@ -214,36 +214,25 @@ app.post('/api/webhooks/razorpay', express.raw({ type: '*/*' }), async (req, res
   }
 });
 
-// Fallback SPA routing wildcard layout for production builds
-if (fs.existsSync(DIST_DIR)) {
-  app.get('*', (req, res) => {
-    if (!req.path.startsWith('/api') && !req.path.startsWith('/ping')) {
-      res.sendFile(path.resolve(DIST_DIR, 'index.html'));
-    }
-  });
-}
-
-// Active UI client connections tracker mapping exportId -> res
-let uiClients = {};
+// ==========================================
+// TRANSCRIPTION PIPELINE ENGINE PORTS
+// ==========================================
 
 /**
  * 1. UI SSE CONNECTION STREAM TUNNEL
- * Your React frontend opens an EventSource connection here right after video upload
+ * Opened by React right after file initialization to drop latency parameters
  */
 app.get('/api/stream-transcription/:exportId', (req, res) => {
   const { exportId } = req.params;
 
-  // Set mandatory streaming configuration headers for Server-Sent Events
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
-  // Save this client connection response hook into our in-memory layer lookup map
   uiClients[exportId] = res;
   console.log(`[SSE] UI Client connected waiting for export track: ${exportId}`);
 
-  // Clean up references cleanly when the user navigates away or closes the browser tab
   req.on('close', () => {
     delete uiClients[exportId];
     console.log(`[SSE] UI Client connection dropped for export track: ${exportId}`);
@@ -251,9 +240,66 @@ app.get('/api/stream-transcription/:exportId', (req, res) => {
 });
 
 /**
- * 2. WEBHOOK RECEIVER & PASSTHROUGH ROUTER
- * Catches incoming payloads from GitHub Action cloud containers and immediately 
- * pipes the arrays directly to the waiting browser socket.
+ * 2. FRONTEND UI PROXY TRIGGER
+ * Kicks off GitHub Actions engine pipeline containers cleanly using safe tokens
+ */
+app.post('/api/transcribe-ui-trigger', express.json(), async (req, res) => {
+  try {
+    const { exportId } = req.body || {};
+    if (!exportId) return res.status(400).json({ error: 'missing_export_tracking_id' });
+
+    const meta = readMeta(exportId);
+    if (!meta) return res.status(404).json({ error: 'export_not_found' });
+
+    const GITHUB_PAT = process.env.GITHUB_PAT;
+    const REPO_OWNER = process.env.REPO_OWNER;
+    const REPO_NAME = process.env.REPO_NAME;
+    const WORKFLOW_ID = 'transcribe.yml';
+
+    if (!GITHUB_PAT || !REPO_OWNER || !REPO_NAME) {
+      console.error("❌ Environment variables missing on Render panel.");
+      return res.status(500).json({ error: 'github_orchestration_not_configured' });
+    }
+
+    const targetUrl = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/actions/workflows/${WORKFLOW_ID}/dispatches`;
+    console.log(`[GitHub API] Hitting target URL: ${targetUrl}`);
+
+    const ghResponse = await fetch(targetUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `token ${GITHUB_PAT.trim()}`,
+        'Accept': 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+        'Content-Type': 'application/json',
+        'User-Agent': 'TextMotion-Express-Engine'
+      },
+      body: JSON.stringify({
+        ref: 'main', 
+        inputs: {
+          exportId: String(exportId),
+          videoUrl: `${process.env.HOST_URL || 'https://textmotion-app.onrender.com'}/api/exports/${exportId}/download`
+        }
+      })
+    });
+
+    if (!ghResponse.ok) {
+      const errorText = await ghResponse.text();
+      console.error(`❌ GitHub Response Error: ${ghResponse.status} - ${errorText}`);
+      return res.status(ghResponse.status).json({ error: errorText });
+    }
+
+    console.log(`[GitHub API] Success! Workflow triggered for exportId: ${exportId}`);
+    return res.status(202).json({ success: true });
+
+  } catch (error) {
+    console.error('❌ Critical Crash inside Trigger Route:', error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * 3. WEBHOOK RECEIVER & PASSTHROUGH ROUTER
+ * Catches incoming payloads from GitHub Actions and pipes them instantly to the client browser
  */
 app.post('/api/webhook/transcription-completed/:exportId', (req, res) => {
   try {
@@ -266,23 +312,18 @@ app.post('/api/webhook/transcription-completed/:exportId', (req, res) => {
       return res.status(400).json({ error: 'invalid_status_from_runner' });
     }
 
-    // Verify if an active frontend browser screen is open and listening to the stream
     const clientResponse = uiClients[exportId];
 
     if (clientResponse) {
-      // 🚀 PIPE IT STRAGHT TO THE UI STATE INTERFACE LAYER!
       clientResponse.write(`data: ${JSON.stringify({ status, transcript, words })}\n\n`);
       console.log(`[SSE System] Successfully blasted data matrix to frontend UI state for ${exportId}`);
       
-      // Close the specific client connection stream cleanly
       clientResponse.end();
       delete uiClients[exportId];
     } else {
-      // Fallback: If user refreshed or closed out prematurely, log it
       console.warn(`[SSE Warning] Webhook arrived but no active UI window state listening for exportId: ${exportId}`);
     }
 
-    // Always signal an explicit 200 OK back to GitHub runner environment so worker node stops cleanly
     res.status(200).json({ success: true, received: true });
 
   } catch (error) {
@@ -291,6 +332,23 @@ app.post('/api/webhook/transcription-completed/:exportId', (req, res) => {
   }
 });
 
+// ==========================================
+// SPA PRODUCTION FRONTEND WILDCARD CATCH-ALL
+// ==========================================
+const DIST_DIR = path.resolve(process.cwd(), 'dist');
+if (fs.existsSync(DIST_DIR)) {
+  app.use(express.static(DIST_DIR));
+  
+  app.get('*', (req, res) => {
+    if (!req.path.startsWith('/api') && !req.path.startsWith('/ping')) {
+      res.sendFile(path.resolve(DIST_DIR, 'index.html'));
+    }
+  });
+}
+
+// ==========================================
+// SERVER INITIALIZATION
+// ==========================================
 const PORT = Number(process.env.PORT || 5174);
 app.listen(PORT, () => {
   console.log(`[server] listening on http://localhost:${PORT}`);
@@ -299,7 +357,6 @@ app.listen(PORT, () => {
 // ==========================================
 // AUTOMATED STORAGE CLEANUP (SAFE GARBAGE COLLECTOR)
 // ==========================================
-
 function cleanExpiredExports() {
   try {
     const NOW = Date.now();
@@ -310,7 +367,6 @@ function cleanExpiredExports() {
     const files = fs.readdirSync(EXPORT_DIR);
     let deletedCount = 0;
 
-    // Filter to handle metadata items as primary sources
     const metadataFiles = files.filter(f => f.endsWith('.json'));
 
     metadataFiles.forEach((metaFile) => {
@@ -326,12 +382,9 @@ function cleanExpiredExports() {
           const exportId = metaFile.replace(/\.json$/, '');
           const associatedZipPath = path.resolve(EXPORT_DIR, `${exportId}.zip`);
 
-          // Remove binary payload first
           if (fs.existsSync(associatedZipPath)) {
             fs.unlinkSync(associatedZipPath);
           }
-          
-          // Remove control ledger file second
           if (fs.existsSync(metaPath)) {
             fs.unlinkSync(metaPath);
           }
@@ -351,5 +404,4 @@ function cleanExpiredExports() {
   }
 }
 
-// Automatically execute cleaner routine every 10 minutes
 setInterval(cleanExpiredExports, 10 * 60 * 1000);
