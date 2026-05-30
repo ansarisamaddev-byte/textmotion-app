@@ -394,10 +394,11 @@ export default function App() {
   const fetchCaptionsFromWebhook = useCallback(async (videoMetadataOrId) => {
     try {
       // Replace with your real microservice endpoints
-      const response = await fetch('https://api.yourdomain.com/v1/get-captions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ video: videoMetadataOrId })
+      const API_BASE_URL = import.meta.env.VITE_API_URL;
+      const response = await fetch(`${API_BASE_URL}/api/v1/get-captions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ video: videoMetadataOrId })
       });
       
       if (!response.ok) throw new Error(`Webhook failed with status: ${response.status}`);
