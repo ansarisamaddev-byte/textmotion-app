@@ -234,7 +234,7 @@ export default function App() {
     }
   }, [captions, activeId]);
 
-  const handleVideoUpload = (e) => {
+  const handleVideoUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
     if (videoSrc?.startsWith('blob:')) URL.revokeObjectURL(videoSrc);
@@ -247,7 +247,7 @@ export default function App() {
     setElementLayerCount(1);
     elementsRef.current = [];
     clearHistory();
-    
+
     setExportPayStatus('Processing media transcript lines...');
     await fetchCaptionsFromWebhook({ name: file.name, size: file.size });
   };
