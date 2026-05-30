@@ -248,8 +248,44 @@ export default function App() {
     elementsRef.current = [];
     clearHistory();
 
-    setExportPayStatus('Processing media transcript lines...');
-    await fetchCaptionsFromWebhook({ name: file.name, size: file.size });
+    try {
+      setExportPayStatus('Uploading video asset to system engine...');
+      
+      const formData = new FormData();
+      formData.append('video', file);
+
+      const API_BASE_URL = import.meta.env.HOST_URL || 'https://textmotion-app.onrender.com';
+      
+      // 1. Post raw file structure parameters to standard multiform route tracking
+      const uploadRes = await fetch(`${API_BASE_URL}/api/exports`, {
+        method: 'POST',
+        body: formData
+      });
+      
+      const uploadData = await uploadRes.json();
+      const currentExportId = uploadData.exportId;
+
+      if (currentExportId) {
+        setExportPayStatus('Video cached! Binding real-time caption listener...');
+        
+        // 2. Open up the connection tunnel to catch the Whisper-API execution parameters inside UI memory
+        startRealTimeWebhookListener(currentExportId);
+
+        // 3. Fire off the safe UI proxy trigger to knock on GitHub's door via server environment values
+        await fetch(`${API_BASE_URL}/api/transcribe-ui-trigger`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ exportId: currentExportId })
+        });
+
+        setExportPayStatus('Whisper engine running... Webhook listening inside UI...');
+      } else {
+        throw new Error("Missing structural export tracking reference mapping from server payload.");
+      }
+    } catch (error) {
+      console.error("❌ Pipeline execution configuration failure:", error);
+      setExportPayStatus('Transcription setup layout pipeline failed.');
+    }
   };
 
   const handleTogglePlay = () => {
@@ -338,6 +374,52 @@ export default function App() {
     setTranslateY(0);
   }, []);
 
+  const startRealTimeWebhookListener = useCallback((exportId) => {
+    const API_BASE_URL = import.meta.env.HOST_URL || 'https://textmotion-app.onrender.com';
+    
+    const eventSource = new EventSource(`${API_BASE_URL}/api/stream-transcription/${exportId}`);
+
+    eventSource.onmessage = (event) => {
+      try {
+        const webhookPayload = JSON.parse(event.data);
+        
+        if (webhookPayload.status === 'completed' && webhookPayload.words) {
+          setExportPayStatus('Captions generated successfully!');
+          
+          // Maps incoming array structures safely to your existing constant baselines
+          const sanitizedCaptions = webhookPayload.words.map((item, index) => ({
+            id: item.id || `whisper_${Date.now()}_${index}`,
+            start: parseFloat(item.start ?? 0),
+            end: parseFloat(item.end ?? 2),
+            text: String(item.word || item.text || ''),
+            boxWidth: parseFloat(item.boxWidth ?? 560),
+            fontSize: parseInt(item.fontSize ?? 40),
+            ...DEFAULT_CAPTION_FIELDS,
+            ...item
+          }));
+
+          captionsRef.current = sanitizedCaptions;
+          setCaptions(sanitizedCaptions);
+          clearHistory(); // Resets your tracking state ledger history safely
+
+          if (sanitizedCaptions.length > 0) {
+            handleSelectCaption(sanitizedCaptions[0].id);
+          }
+
+          eventSource.close(); // Cleanly cut the stream channel link
+        }
+      } catch (err) {
+        console.error("❌ Failed to parse incoming streaming webhook data matrix:", err);
+      }
+    };
+
+    eventSource.onerror = (err) => {
+      console.error("❌ Real-time SSE communication line broke down:", err);
+      setExportPayStatus('Connection lost. Please retry layout parsing.');
+      eventSource.close();
+    };
+  }, [clearHistory, handleSelectCaption]);
+
   const handleSelectElement = useCallback((id) => {
     setActiveElementId(id);
     setActiveId(null);
@@ -394,7 +476,7 @@ export default function App() {
   const fetchCaptionsFromWebhook = useCallback(async (videoMetadataOrId) => {
     try {
       // Replace with your real microservice endpoints
-      const API_BASE_URL = import.meta.env.VITE_API_URL;
+      const API_BASE_URL = import.meta.env.HOST_URL;
       const response = await fetch(`${API_BASE_URL}/api/v1/get-captions`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

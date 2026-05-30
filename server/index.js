@@ -223,11 +223,78 @@ if (fs.existsSync(DIST_DIR)) {
   });
 }
 
+// Active UI client connections tracker mapping exportId -> res
+let uiClients = {};
+
+/**
+ * 1. UI SSE CONNECTION STREAM TUNNEL
+ * Your React frontend opens an EventSource connection here right after video upload
+ */
+app.get('/api/stream-transcription/:exportId', (req, res) => {
+  const { exportId } = req.params;
+
+  // Set mandatory streaming configuration headers for Server-Sent Events
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  // Save this client connection response hook into our in-memory layer lookup map
+  uiClients[exportId] = res;
+  console.log(`[SSE] UI Client connected waiting for export track: ${exportId}`);
+
+  // Clean up references cleanly when the user navigates away or closes the browser tab
+  req.on('close', () => {
+    delete uiClients[exportId];
+    console.log(`[SSE] UI Client connection dropped for export track: ${exportId}`);
+  });
+});
+
+/**
+ * 2. WEBHOOK RECEIVER & PASSTHROUGH ROUTER
+ * Catches incoming payloads from GitHub Action cloud containers and immediately 
+ * pipes the arrays directly to the waiting browser socket.
+ */
+app.post('/api/webhook/transcription-completed/:exportId', (req, res) => {
+  try {
+    const { exportId } = req.params;
+    const { status, transcript, words } = req.body || {};
+
+    console.log(`[Webhook] Caught GitHub runner response for item: ${exportId}, Status: ${status}`);
+
+    if (status !== 'completed') {
+      return res.status(400).json({ error: 'invalid_status_from_runner' });
+    }
+
+    // Verify if an active frontend browser screen is open and listening to the stream
+    const clientResponse = uiClients[exportId];
+
+    if (clientResponse) {
+      // 🚀 PIPE IT STRAGHT TO THE UI STATE INTERFACE LAYER!
+      clientResponse.write(`data: ${JSON.stringify({ status, transcript, words })}\n\n`);
+      console.log(`[SSE System] Successfully blasted data matrix to frontend UI state for ${exportId}`);
+      
+      // Close the specific client connection stream cleanly
+      clientResponse.end();
+      delete uiClients[exportId];
+    } else {
+      // Fallback: If user refreshed or closed out prematurely, log it
+      console.warn(`[SSE Warning] Webhook arrived but no active UI window state listening for exportId: ${exportId}`);
+    }
+
+    // Always signal an explicit 200 OK back to GitHub runner environment so worker node stops cleanly
+    res.status(200).json({ success: true, received: true });
+
+  } catch (error) {
+    console.error('[Webhook Critical Error] Pipeline crashed processing data transmission:', error);
+    res.status(500).json({ error: 'internal_processing_failed' });
+  }
+});
+
 const PORT = Number(process.env.PORT || 5174);
 app.listen(PORT, () => {
   console.log(`[server] listening on http://localhost:${PORT}`);
 });
-
 
 // ==========================================
 // AUTOMATED STORAGE CLEANUP (SAFE GARBAGE COLLECTOR)
