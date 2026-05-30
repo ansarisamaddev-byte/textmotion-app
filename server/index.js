@@ -12,12 +12,20 @@ import archiverZipEncrypted from 'archiver-zip-encrypted';
 // Load env from project root "env" file
 dotenv.config({ path: path.resolve(process.cwd(), 'env') });
 
+// Register custom zip format
 archiver.registerFormat('zip-encrypted', archiverZipEncrypted);
 
+// Initialize Express App first to prevent initialization crashes
 const app = express();
 app.use(cors());
 
-// Razorpay
+// Serve static assets from the Vite build directory (SPA Fallback)
+const DIST_DIR = path.resolve(process.cwd(), 'dist');
+if (fs.existsSync(DIST_DIR)) {
+  app.use(express.static(DIST_DIR));
+}
+
+// Razorpay Instance Setup
 const KEY_ID = process.env.KEY_ID;
 const KEY_SECRET = process.env.KEY_SECRET;
 const WEBHOOK_SECRET = process.env.RAZORPAY_WEBHOOK_SECRET || '';
@@ -26,13 +34,17 @@ const razorpay = KEY_ID && KEY_SECRET
   ? new Razorpay({ key_id: KEY_ID, key_secret: KEY_SECRET })
   : null;
 
-// Storage
-const STORAGE_DIR = path.resolve(process.cwd(), 'server', 'storage');
+// Storage Infrastructure (Render Persistent Disk vs Local Fallback)
+const STORAGE_DIR = process.env.RENDER_DISK_MOUNT_PATH 
+  ? path.resolve(process.env.RENDER_DISK_MOUNT_PATH, 'storage')
+  : path.resolve(process.cwd(), 'server', 'storage');
+
 const EXPORT_DIR = path.resolve(STORAGE_DIR, 'exports');
 fs.mkdirSync(EXPORT_DIR, { recursive: true });
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } });
 
+// Meta helper utilities
 const readMeta = (exportId) => {
   const metaPath = path.resolve(EXPORT_DIR, `${exportId}.json`);
   if (!fs.existsSync(metaPath)) return null;
@@ -47,8 +59,12 @@ const writeMeta = (exportId, meta) => {
 const genId = () => crypto.randomBytes(12).toString('hex');
 const genPassword = () => crypto.randomBytes(9).toString('base64url'); // ~12 chars
 
-// JSON endpoints (except webhook)
+// JSON parsing configuration for typical client traffic
 app.use('/api', express.json({ limit: '5mb' }));
+
+app.get('/ping', (req, res) => {
+  res.send('ok');
+});
 
 // Create encrypted zip and return exportId + download URL
 app.post('/api/exports', upload.single('video'), async (req, res) => {
@@ -198,45 +214,75 @@ app.post('/api/webhooks/razorpay', express.raw({ type: '*/*' }), async (req, res
   }
 });
 
+// Fallback SPA routing wildcard layout for production builds
+if (fs.existsSync(DIST_DIR)) {
+  app.get('*', (req, res) => {
+    if (!req.path.startsWith('/api') && !req.path.startsWith('/ping')) {
+      res.sendFile(path.resolve(DIST_DIR, 'index.html'));
+    }
+  });
+}
+
 const PORT = Number(process.env.PORT || 5174);
 app.listen(PORT, () => {
   console.log(`[server] listening on http://localhost:${PORT}`);
 });
 
 
-
 // ==========================================
-// AUTOMATED STORAGE CLEANUP (GARBAGE COLLECTOR)
+// AUTOMATED STORAGE CLEANUP (SAFE GARBAGE COLLECTOR)
 // ==========================================
 
 function cleanExpiredExports() {
   try {
     const NOW = Date.now();
-    const ONE_HOUR_MS = 60 * 60 * 1000; // 1 Hour lifespan
+    const LIFESPAN_MS = 60 * 60 * 1000; // 1 Hour lifespan
 
-    // Read all files inside the exports directory
+    if (!fs.existsSync(EXPORT_DIR)) return;
+
     const files = fs.readdirSync(EXPORT_DIR);
     let deletedCount = 0;
 
-    files.forEach((file) => {
-      const filePath = path.resolve(EXPORT_DIR, file);
-      const stats = fs.statSync(filePath);
-      const fileAgeMs = NOW - stats.mtimeMs;
+    // Filter to handle metadata items as primary sources
+    const metadataFiles = files.filter(f => f.endsWith('.json'));
 
-      // If the file is older than 1 hour, wipe it completely
-      if (fileAgeMs > ONE_HOUR_MS) {
-        fs.unlinkSync(filePath);
-        deletedCount++;
+    metadataFiles.forEach((metaFile) => {
+      const metaPath = path.resolve(EXPORT_DIR, metaFile);
+      
+      try {
+        if (!fs.existsSync(metaPath)) return;
+        
+        const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+        const fileAgeMs = NOW - (meta.createdAt || 0);
+
+        if (fileAgeMs > LIFESPAN_MS) {
+          const exportId = metaFile.replace(/\.json$/, '');
+          const associatedZipPath = path.resolve(EXPORT_DIR, `${exportId}.zip`);
+
+          // Remove binary payload first
+          if (fs.existsSync(associatedZipPath)) {
+            fs.unlinkSync(associatedZipPath);
+          }
+          
+          // Remove control ledger file second
+          if (fs.existsSync(metaPath)) {
+            fs.unlinkSync(metaPath);
+          }
+
+          deletedCount++;
+        }
+      } catch (fileErr) {
+        console.error(`[GC CLEANUP] Skipping file ${metaFile} due to read error:`, fileErr.message);
       }
     });
 
     if (deletedCount > 0) {
-      console.log(`[GC CLEANUP] Successfully removed ${deletedCount} expired export files from storage.`);
+      console.log(`[GC CLEANUP] Successfully swept ${deletedCount} expired export tracking items.`);
     }
   } catch (err) {
-    console.error('[GC CLEANUP] Error during automated file purging:', err);
+    console.error('[GC CLEANUP] Core error caught during automated file purging:', err);
   }
 }
 
-// Automatically execute the cleaner every 10 minutes
-setInterval(cleanExpiredExports, 10 * 1000 * 60);
+// Automatically execute cleaner routine every 10 minutes
+setInterval(cleanExpiredExports, 10 * 60 * 1000);

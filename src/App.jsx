@@ -247,6 +247,9 @@ export default function App() {
     setElementLayerCount(1);
     elementsRef.current = [];
     clearHistory();
+    
+    setExportPayStatus('Processing media transcript lines...');
+    await fetchCaptionsFromWebhook({ name: file.name, size: file.size });
   };
 
   const handleTogglePlay = () => {
@@ -386,6 +389,47 @@ export default function App() {
     );
     refreshCanvas();
   }, [duration, updateElementsLive, refreshCanvas]);
+
+  // Dynamic Webhook Caption Ingestion Workflow
+  const fetchCaptionsFromWebhook = useCallback(async (videoMetadataOrId) => {
+    try {
+      // Replace with your real microservice endpoints
+      const response = await fetch('https://api.yourdomain.com/v1/get-captions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ video: videoMetadataOrId })
+      });
+      
+      if (!response.ok) throw new Error(`Webhook failed with status: ${response.status}`);
+      
+      const remoteData = await response.json();
+      
+      // Map properties gracefully to ensure mandatory engine fields are never undefined
+      const sanitizedCaptions = remoteData.map((item, index) => ({
+        id: item.id || `webhook_${Date.now()}_${index}`,
+        start: parseFloat(item.start ?? 0),
+        end: parseFloat(item.end ?? 2),
+        text: String(item.text || ''),
+        boxWidth: parseFloat(item.boxWidth ?? 560),
+        fontSize: parseInt(item.fontSize ?? 40),
+        // Fallback fields using app constant structures
+        ...DEFAULT_CAPTION_FIELDS,
+        ...item
+      }));
+
+      // Flush clean data into the application state tracking buffers
+      captionsRef.current = sanitizedCaptions;
+      setCaptions(sanitizedCaptions);
+      clearHistory(); // Resets tracking history array with the clean remote baseline
+      
+      // Auto-focus the first caption block if available
+      if (sanitizedCaptions.length > 0) {
+        handleSelectCaption(sanitizedCaptions[0].id);
+      }
+    } catch (error) {
+      console.error("❌ Failed to resolve webhook response pipeline: ", error);
+    }
+  }, [clearHistory, handleSelectCaption]);
 
   const handleElementLayerLive = useCallback((id, layer) => {
     updateElementsLive(
