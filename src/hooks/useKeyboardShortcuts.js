@@ -50,6 +50,12 @@ export function useKeyboardShortcuts(handlers, enabled = true) {
         return;
       }
 
+      if (!meta && key === 'c' && handlers.onCut) {
+        e.preventDefault();
+        handlers.onCut();
+        return;
+      }
+
       if (e.key === 'ArrowLeft' && handlers.onSeekBack) {
         e.preventDefault();
         handlers.onSeekBack();
@@ -87,15 +93,23 @@ export function useKeyboardShortcuts(handlers, enabled = true) {
       }
 
       if (!meta && e.key === '1' && handlers.onOpenPanel) {
-        handlers.onOpenPanel('presets');
+        handlers.onOpenPanel('caption-presets');
         return;
       }
       if (!meta && e.key === '2' && handlers.onOpenPanel) {
-        handlers.onOpenPanel('custom');
+        handlers.onOpenPanel('preset-font');
         return;
       }
       if (!meta && e.key === '3' && handlers.onOpenPanel) {
-        handlers.onOpenPanel('animate');
+        handlers.onOpenPanel('custom-font');
+        return;
+      }
+      if (!meta && e.key === '4' && handlers.onOpenPanel) {
+        handlers.onOpenPanel('elements');
+        return;
+      }
+      if (!meta && e.key === '5' && handlers.onOpenPanel) {
+        handlers.onOpenPanel('custom-animate');
       }
     };
 
