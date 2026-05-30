@@ -17,7 +17,7 @@
     "archiver-zip-encrypted": "^2.0.0",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
-    "express": "^4.21.2",
+    "express": "^4.22.2",
     "lucide-react": "^0.344.0",
     "mp4-muxer": "^5.2.2",
     "multer": "^1.4.5-lts.2",
